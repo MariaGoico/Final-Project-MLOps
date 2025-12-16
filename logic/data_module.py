@@ -1,94 +1,132 @@
 import pandas as pd
-import torch
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 import numpy as np
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from logic.utilities import DataValidator
+import pickle
+import os
 
 
-class StrokeDataset(Dataset):
-    def __init__(self, csv_file, train=True):
-        """
-        Args:
-            csv_file (string): Path to the csv file with annotations.
-            train (bool): If True, fit encoders/scalers. If False, use pre-fitted ones.
-        """
-        self.data = pd.read_csv(csv_file)
-        self.train = train
-        
-        # Separate features and target
-        self.target = self.data['stroke'].values
-        self.data = self.data.drop(['id', 'stroke'], axis=1)
-        
-        # Define categorical and numerical columns
+class StrokeDataProcessor:
+    """
+    Data processor for stroke prediction dataset.
+    Handles preprocessing, encoding, and scaling for imbalanced binary classification.
+    """
+    
+    def __init__(self):
+        self.encoders = {}
+        self.scaler = StandardScaler()
         self.cat_cols = ['gender', 'ever_married', 'work_type', 'Residence_type', 'smoking_status']
         self.num_cols = ['age', 'hypertension', 'heart_disease', 'avg_glucose_level', 'bmi']
+        self.is_fitted = False
         
-        # Handle missing values in smoking_status (empty strings)
-        self.data['smoking_status'] = self.data['smoking_status'].fillna('Unknown')
-        self.data['bmi'] = self.data['bmi'].fillna(self.data['bmi'].median())
+    def load_data(self, csv_file):
+        """Load data from CSV file"""
+        data = pd.read_csv(csv_file)
         
-        # Initialize encoders and scalers
-        if train:
+        # Separate features and target
+        if 'stroke' in data.columns:
+            y = data['stroke'].values
+            X = data.drop(['stroke'], axis=1)
+            if 'id' in X.columns:
+                X = X.drop(['id'], axis=1)
+        else:
+            y = None
+            X = data.drop(['id'], axis=1) if 'id' in data.columns else data
+            
+        return X, y
+    
+    def preprocess(self, X, fit=True):
+        
+        X = X.copy()
+        
+        # Handle missing values
+        X['smoking_status'] = X['smoking_status'].fillna('Unknown')
+        
+        if fit:
+            # Store median for BMI imputation
+            self.bmi_median = X['bmi'].median()
+        X['bmi'] = X['bmi'].fillna(self.bmi_median)
+        
+        # Encode categorical variables
+        if fit:
             self.encoders = {}
             for col in self.cat_cols:
                 le = LabelEncoder()
-                self.data[col] = le.fit_transform(self.data[col].astype(str))
+                X[col] = le.fit_transform(X[col].astype(str))
                 self.encoders[col] = le
-            
-            self.scaler = StandardScaler()
-            self.data[self.num_cols] = self.scaler.fit_transform(self.data[self.num_cols])
+        else:
+            for col in self.cat_cols:
+                X[col] = self.encoders[col].transform(X[col].astype(str))
         
-    def set_encoders_scalers(self, encoders, scaler):
-        """Set pre-fitted encoders and scaler for test set"""
-        self.encoders = encoders
-        self.scaler = scaler
+        # Scale numerical variables
+        if fit:
+            X[self.num_cols] = self.scaler.fit_transform(X[self.num_cols])
+            self.is_fitted = True
+        else:
+            X[self.num_cols] = self.scaler.transform(X[self.num_cols])
         
-        for col in self.cat_cols:
-            self.data[col] = self.encoders[col].transform(self.data[col].astype(str))
-        
-        self.data[self.num_cols] = self.scaler.transform(self.data[self.num_cols])
+        return X.values
     
-    def __len__(self):
-        return len(self.data)
+    def fit_transform(self, X):
+        """Fit preprocessor and transform data"""
+        return self.preprocess(X, fit=True)
     
-    def __getitem__(self, idx):
-        # Get features as tensor
-        features = torch.tensor(self.data.iloc[idx].values, dtype=torch.float32)
-        # Get target
-        target = torch.tensor(self.target[idx], dtype=torch.float32)
+    def transform(self, X):
+        """Transform data using fitted preprocessor"""
+        if not self.is_fitted:
+            raise ValueError("Preprocessor must be fitted before transform. Use fit_transform first.")
+        return self.preprocess(X, fit=False)
+    
+    def save(self, filepath):
+        """Save the fitted preprocessor"""
+        if not self.is_fitted:
+            raise ValueError("Cannot save unfitted preprocessor")
         
-        return features, target
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'encoders': self.encoders,
+                'scaler': self.scaler,
+                'bmi_median': self.bmi_median,
+                'cat_cols': self.cat_cols,
+                'num_cols': self.num_cols
+            }, f)
     
-    def get_encoders_scalers(self):
-        """Return fitted encoders and scaler for use with test set"""
-        return self.encoders, self.scaler
+    def load(self, filepath):
+        """Load a fitted preprocessor"""
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        
+        self.encoders = data['encoders']
+        self.scaler = data['scaler']
+        self.bmi_median = data['bmi_median']
+        self.cat_cols = data['cat_cols']
+        self.num_cols = data['num_cols']
+        self.is_fitted = True
 
 
-# Usage example
+# Example usage
 if __name__ == "__main__":
-    # Create dataset
-    train_dataset = StrokeDataset('data/dataset.csv', train=True)
+    # Initialize processor
+    processor = StrokeDataProcessor()
     
-    # Get encoders and scalers for potential test set
-    encoders, scaler = train_dataset.get_encoders_scalers()
+    # Load and preprocess training data
+    X_train, y_train = processor.load_data('data/dataset.csv')
+    X_train_processed = processor.fit_transform(X_train)
     
-    # Create dataloader
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=32,
-        shuffle=True,
-        num_workers=4
-    )
+    # Save preprocessor
+    processor.save('models/preprocessor.pkl')
     
-    # Print dataset info
-    print(f"Dataset size: {len(train_dataset)}")
-    print(f"Number of features: {train_dataset.data.shape[1]}")
-    print(f"Feature names: {list(train_dataset.data.columns)}")
+    # Load and preprocess test data
+    X_test, y_test = processor.load_data('data/dataset.csv')
+    X_test_processed = processor.transform(X_test)
     
-    # Test loading a batch
-    for features, targets in train_loader:
-        print(f"\nBatch features shape: {features.shape}")
-        print(f"Batch targets shape: {targets.shape}")
-        print(f"Sample features: {features[0]}")
-        print(f"Sample target: {targets[0]}")
-        break
+    # Get validation strategy
+    validator = DataValidator()
+    cv = validator.get_stratified_kfold(n_splits=5)
+    scale_pos_weight = validator.get_scale_pos_weight(y_train)
+    
+    print(f"Training samples: {len(X_train_processed)}")
+    print(f"Test samples: {len(X_test_processed)}")
+    print(f"Scale pos weight for XGBoost: {scale_pos_weight:.2f}")
+    print(f"Class distribution - 0: {np.sum(y_train==0)}, 1: {np.sum(y_train==1)}")

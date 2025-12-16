@@ -18,8 +18,6 @@ dependencies = [
     "pytest>=9.0.1",
     "pytest-cov>=7.0.0",
     "python-multipart>=0.0.20",
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
     "uvicorn>=0.38.0",
 ]
 
