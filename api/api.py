@@ -24,9 +24,9 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# ---------------------------------------------------------
+
 # Home Page
-# ---------------------------------------------------------
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """
@@ -35,9 +35,9 @@ async def home(request: Request):
     return templates.TemplateResponse(request, "index.html", {"request": request})
 
 
-# ---------------------------------------------------------
+
 # Predict Endpoint
-# ---------------------------------------------------------
+
 @app.post("/predict")
 async def predict_class(
     file: UploadFile = File(...),

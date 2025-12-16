@@ -1,0 +1,29 @@
+[project]
+name = "final-project-mlops"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "black>=25.11.0",
+    "click>=8.1.0",
+    "fastapi>=0.121.2",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "mlflow>=3.6.0",
+    "onnxruntime>=1.23.2",
+    "onnxscript>=0.5.6",
+    "pillow>=12.0.0",
+    "pylint>=4.0.3",
+    "pytest>=9.0.1",
+    "pytest-cov>=7.0.0",
+    "python-multipart>=0.0.20",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "uvicorn>=0.38.0",
+]
+
+[tool.coverage.run]
+omit = ["logic/train.py",
+        "__init__.py",
+        "logic/select_best_model.py"]
