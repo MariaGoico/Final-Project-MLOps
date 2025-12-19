@@ -9,7 +9,7 @@ test:
 
 # Format code
 format:	
-	uv run -- black logic/*.py cli/*.py api/*.py
+	uv run -- black logic/*.py api/*.py
 
 # Lint code (ignore non-critical warnings for make)
 lint:
