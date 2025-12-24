@@ -144,7 +144,7 @@ class XGBoostStrokeClassifier:
         
         return best_threshold, best_f1, thresholds, f1_scores
     
-    def plot_feature_importance(self, model, save_path='feature_importance.png'):
+    def plot_feature_importance(self, model, save_path='outputs/feature_importance.png'):
         """Plot and save feature importance"""
         fig, ax = plt.subplots(figsize=(10, 6))
         xgb.plot_importance(model, ax=ax, max_num_features=15)
@@ -153,7 +153,7 @@ class XGBoostStrokeClassifier:
         plt.close()
         return save_path
     
-    def plot_threshold_analysis(self, thresholds, f1_scores, save_path='threshold_analysis.png'):
+    def plot_threshold_analysis(self, thresholds, f1_scores, save_path='outputs/threshold_analysis.png'):
         """Plot threshold vs F1 score"""
         plt.figure(figsize=(10, 6))
         plt.plot(thresholds, f1_scores)
@@ -165,9 +165,9 @@ class XGBoostStrokeClassifier:
         plt.close()
         return save_path
     
-    def plot_confusion_matrix(self, y_true, y_pred, save_path='confusion_matrix.png'):
+    def plot_confusion_matrix(self, y_true, y_pred, save_path='outputs/confusion_matrix.png'):
         """Plot confusion matrix"""
-        cm = confusion_matrix(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, normalize='true')
         plt.figure(figsize=(8, 6))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
         plt.title('Confusion Matrix')
@@ -212,13 +212,13 @@ class XGBoostStrokeClassifier:
             
             # Log best trial
             mlflow.log_params(study.best_params)
-            mlflow.log_metric("best_cv_roc_auc", study.best_value)
+            mlflow.log_metric("cv_pr_auc", study.best_value)
             
             # Train final model with best parameters
             best_params = study.best_params
             best_params.update({
                 'objective': 'binary:logistic',
-                'eval_metric': 'auc',
+                'eval_metric': 'pr',
                 'scale_pos_weight': self.scale_pos_weight,
                 'random_state': 42,
                 'n_jobs': -1
@@ -289,6 +289,6 @@ class XGBoostStrokeClassifier:
 
 if __name__ == "__main__":
     classifier = XGBoostStrokeClassifier(
-        data_path='stroke_data.csv'
+        data_path='data/dataset.csv'
     )
     model, threshold = classifier.train_and_optimize(n_trials=50)
