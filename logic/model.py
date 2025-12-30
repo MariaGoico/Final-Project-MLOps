@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from sklearn.metrics import roc_curve, auc
 import json
+import shap
 import onnxmltools
 from onnxmltools.convert.common.data_types import FloatTensorType
 
@@ -189,6 +190,31 @@ class XGBoostBreastCancerClassifier:
         
         return best_threshold, best_f1
 
+    def log_shap_interpretability(self, model, X_train, feature_names):
+        """
+        Generates and logs SHAP global interpretability artifacts to MLflow.
+        """
+        # Create Explainer
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_train)
+
+        # 1. Save Summary Plot (Global Importance)
+        plt.figure(figsize=(10, 6))
+        shap.summary_plot(shap_values, X_train, feature_names=feature_names, show=False)
+        summary_plot_path = "plots/shap_summary.png"
+        plt.tight_layout()
+        plt.savefig(summary_plot_path)
+        plt.close()
+
+        # Log to MLflow
+        mlflow.log_artifact(summary_plot_path)
+        
+        # 2. Optional: Log SHAP values as a pickle for raw data access
+        shap_data_path = "models/shap_values.pkl"
+        with open(shap_data_path, "wb") as f:
+            pickle.dump(shap_values, f)
+        mlflow.log_artifact(shap_data_path)
+
     def train_and_optimize(self, n_trials=100):
         """
         Main training loop with Optuna optimization and MLflow tracking.
@@ -199,6 +225,9 @@ class XGBoostBreastCancerClassifier:
         
         # Prepare cross-validation
         cv = self.validator.get_stratified_kfold(n_splits=5)
+
+        # Features for shap values 
+        feature_names = [f"feature_{i}" for i in range(X_train.shape[1])]
         
         # Start MLflow parent run
         with mlflow.start_run(run_name="xgboost_optimization"):
@@ -250,6 +279,9 @@ class XGBoostBreastCancerClassifier:
                 early_stopping_rounds=50,
                 verbose_eval=False,
             )
+
+            print("Generating SHAP global interpretability artifacts...")
+            self.log_shap_interpretability(self.best_model, X_train, feature_names)
             
             # Find optimal threshold using threshold-dependent metrics
             self.best_threshold, _ = self.find_optimal_threshold(
@@ -261,6 +293,7 @@ class XGBoostBreastCancerClassifier:
             # Final evaluation on TEST
             y_test_proba = self.best_model.predict(dtest)
             y_test_pred = (y_test_proba >= self.best_threshold).astype(int)
+
 
             mlflow.log_metric("test_roc_auc", roc_auc_score(y_test, y_test_proba))
             mlflow.log_metric("test_pr_auc", average_precision_score(y_test, y_test_proba))
