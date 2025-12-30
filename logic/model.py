@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import xgboost as xgb
+from xgboost import XGBClassifier
 import optuna
 import mlflow
 import mlflow.xgboost
@@ -12,6 +13,9 @@ import pickle
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from sklearn.metrics import roc_curve, auc
+import json
+import onnxmltools
+from onnxmltools.convert.common.data_types import FloatTensorType
 
 from logic.data_module import CancerDataProcessor
 from logic.utilities import DataValidator
@@ -31,6 +35,7 @@ class XGBoostBreastCancerClassifier:
         self.validator = DataValidator()
         self.best_model = None
         self.best_threshold = 0.5
+        self.n_features = None  
         
         # Set MLflow tracking URI (configured for CI/CD)
         if tracking_uri is None:
@@ -52,6 +57,7 @@ class XGBoostBreastCancerClassifier:
         
         # Calculate scale_pos_weight for imbalanced data
         self.scale_pos_weight = self.validator.get_scale_pos_weight(y_train)
+        self.n_features = X_train.shape[1]  
 
         return X_train, X_val, X_test, y_train, y_val, y_test
 
@@ -183,7 +189,6 @@ class XGBoostBreastCancerClassifier:
         
         return best_threshold, best_f1
 
-    
     def train_and_optimize(self, n_trials=100):
         """
         Main training loop with Optuna optimization and MLflow tracking.

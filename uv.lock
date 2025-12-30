@@ -630,6 +630,8 @@ dependencies = [
     { name = "httpx" },
     { name = "jinja2" },
     { name = "mlflow" },
+    { name = "onnxconverter-common" },
+    { name = "onnxmltools" },
     { name = "onnxruntime" },
     { name = "onnxscript" },
     { name = "optuna" },
@@ -640,6 +642,7 @@ dependencies = [
     { name = "pytest-cov" },
     { name = "python-multipart" },
     { name = "seaborn" },
+    { name = "skl2onnx" },
     { name = "uvicorn" },
     { name = "xgboost" },
 ]
@@ -652,6 +655,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "mlflow", specifier = ">=3.6.0" },
+    { name = "onnxconverter-common", specifier = ">=1.16.0" },
+    { name = "onnxmltools", specifier = ">=1.14.0" },
     { name = "onnxruntime", specifier = ">=1.23.2" },
     { name = "onnxscript", specifier = ">=0.5.6" },
     { name = "optuna", specifier = ">=4.6.0" },
@@ -662,6 +667,7 @@ requires-dist = [
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "skl2onnx", specifier = ">=1.19.1" },
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "xgboost", specifier = ">=3.1.2" },
 ]
@@ -1534,6 +1540,33 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6c/1a/2a94112a39d01a9d1490f5ef3c205d8a17fe1ca27f307b026c40d62d8e9f/onnx_ir-0.1.12.tar.gz", hash = "sha256:742e0bff875d0547724187560b3f441833191c8aa939c05f14176f4892784deb", size = 112699, upload-time = "2025-10-28T23:43:54.129Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/36/c4df116f5dcaa82ec7944e5d25624a3811f6603fd190660b0b079ea759fb/onnx_ir-0.1.12-py3-none-any.whl", hash = "sha256:17f86faf8a53b979430bde1bc6022c7a162b0d1534550ddb17a1d37eb993e765", size = 129277, upload-time = "2025-10-28T23:43:52.493Z" },
+]
+
+[[package]]
+name = "onnxconverter-common"
+version = "1.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "onnx" },
+    { name = "packaging" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/67/8dca1868a6e226f8d3f7d666cb6a48b79a60aad5267b16b24627cd8d9eb8/onnxconverter_common-1.16.0-py2.py3-none-any.whl", hash = "sha256:df39ee96f17fff119dff10dd245467651b60b9e8a96020eb93402239794852f7", size = 89511, upload-time = "2025-08-28T19:37:46.988Z" },
+]
+
+[[package]]
+name = "onnxmltools"
+version = "1.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "onnx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/36/9c/e139c1425f50c42ffd8f1797ff3b1ab39ffa903c95c3061ad0b34276e418/onnxmltools-1.14.0.tar.gz", hash = "sha256:d8178f617dab385e96332c3c34be038470b23cb19dd89f40212e867919206544", size = 221758, upload-time = "2025-06-10T15:34:12.192Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/09/c5b247a11ece1cbf8650bdba12d556fb2ef5a5a7e6675fa8edeea889c38e/onnxmltools-1.14.0-py2.py3-none-any.whl", hash = "sha256:8036cdcc16d50cf91fe7470d4a91a5bd7d2006170d052b051f33287aa7615252", size = 352524, upload-time = "2025-06-10T15:34:10.394Z" },
 ]
 
 [[package]]
@@ -2417,6 +2450,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "skl2onnx"
+version = "1.19.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "onnx" },
+    { name = "scikit-learn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/59/3f4d82eb96d8a80fd80325fc658d20e772ee6ac1c6f5cc85dd6aaaf7ccff/skl2onnx-1.19.1.tar.gz", hash = "sha256:0c105f2a3b87a624dd218d1fb98fdd19cf1bf6217190d25ce7e15484127d0e5d", size = 948919, upload-time = "2025-05-28T17:37:02.746Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/ec/9a0d709217aa385d87b3eadcf19e2ae32eca097077fa2236312d5fc8f656/skl2onnx-1.19.1-py3-none-any.whl", hash = "sha256:fddf2f49e3ffc355f332e676b43c6fec5e63797627925b279d9f5b2c4d0c81a7", size = 315511, upload-time = "2025-05-28T17:37:00.61Z" },
 ]
 
 [[package]]
