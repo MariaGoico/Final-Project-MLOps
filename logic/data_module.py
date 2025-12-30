@@ -4,6 +4,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from logic.utilities import DataValidator
 import pickle
 import os
+from logic.utilities import set_seed
 
 
 class CancerDataProcessor:

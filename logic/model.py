@@ -15,6 +15,8 @@ from sklearn.metrics import roc_curve, auc
 
 from logic.data_module import CancerDataProcessor
 from logic.utilities import DataValidator
+from logic.utilities import set_seed
+
 
 
 class XGBoostBreastCancerClassifier:
@@ -53,7 +55,7 @@ class XGBoostBreastCancerClassifier:
 
         return X_train, X_val, X_test, y_train, y_val, y_test
 
-    def plot_confusion_matrix(self, y_true, y_pred):
+    def plot_confusion_matrix(self, y_true, y_pred, save_path="plots/confusion_matrix.png"):
         cm = confusion_matrix(y_true, y_pred)
 
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
@@ -61,10 +63,10 @@ class XGBoostBreastCancerClassifier:
         plt.title("Confusion Matrix (Test Set)")
         plt.tight_layout()
 
-        plt.savefig("confusion_matrix.png")
+        plt.savefig(save_path)
         plt.close()
 
-    def plot_roc_curve(self, y_true, y_proba):
+    def plot_roc_curve(self, y_true, y_proba, save_path="plots/roc_curve.png"):
         fpr, tpr, _ = roc_curve(y_true, y_proba)
         roc_auc = auc(fpr, tpr)
 
@@ -77,7 +79,7 @@ class XGBoostBreastCancerClassifier:
         plt.legend()
         plt.tight_layout()
 
-        plt.savefig("roc_curve.png")
+        plt.savefig(save_path)
         plt.close()
     
     def objective(self, trial, X_train, y_train, cv):
@@ -142,7 +144,7 @@ class XGBoostBreastCancerClassifier:
         # Return threshold-independent metric to optimize (ROC-AUC)
         return mean_roc_auc
     
-    def find_optimal_threshold(self, model, X_val, y_val, plot=True):
+    def find_optimal_threshold(self, model, X_val, y_val, plot=True, save_path="plots/threshold_f1.png"):
         """
         Find optimal threshold using threshold-dependent metrics.
         Optimizes F1 score for production use.
@@ -176,7 +178,7 @@ class XGBoostBreastCancerClassifier:
             plt.title("Threshold vs F1 Score")
             plt.tight_layout()
 
-            plt.savefig("threshold_f1.png")
+            plt.savefig(save_path)
             plt.close()
         
         return best_threshold, best_f1
@@ -285,10 +287,10 @@ class XGBoostBreastCancerClassifier:
             mlflow.log_artifact('models/threshold.pkl')
 
             self.plot_roc_curve(y_test, y_test_proba)
-            mlflow.log_artifact("roc_curve.png")
+            mlflow.log_artifact("plots/roc_curve.png")
 
             self.plot_confusion_matrix(y_test, y_test_pred)
-            mlflow.log_artifact("confusion_matrix.png")
+            mlflow.log_artifact("plots/confusion_matrix.png")
             
             print(f"\n{'='*60}")
             print(f"Training Complete!")
@@ -306,7 +308,8 @@ class XGBoostBreastCancerClassifier:
 
 
 if __name__ == "__main__":
+    set_seed() #set a fixed seed   
     classifier = XGBoostBreastCancerClassifier(
         data_path='data/data.csv'
     )
-    model, threshold = classifier.train_and_optimize(n_trials=50)
+    model, threshold = classifier.train_and_optimize(n_trials=5)
