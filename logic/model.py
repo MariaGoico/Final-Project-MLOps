@@ -210,10 +210,15 @@ class XGBoostBreastCancerClassifier:
         mlflow.log_artifact(summary_plot_path)
         
         # 2. Optional: Log SHAP values as a pickle for raw data access
-        shap_data_path = "models/shap_values.pkl"
-        with open(shap_data_path, "wb") as f:
-            pickle.dump(shap_values, f)
-        mlflow.log_artifact(shap_data_path)
+        # Save aggregated SHAP importance
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
+        shap_summary = dict(zip(feature_names, mean_abs_shap.tolist()))
+
+        os.makedirs("artifacts", exist_ok=True)
+        with open("artifacts/shap_global.json", "w") as f:
+            json.dump(shap_summary, f, indent=2)
+
+        mlflow.log_artifact("artifacts/shap_global.json")
 
     def train_and_optimize(self, n_trials=100):
         """
@@ -300,8 +305,29 @@ class XGBoostBreastCancerClassifier:
             mlflow.log_metric("test_f1", f1_score(y_test, y_test_pred))
             mlflow.log_metric("test_precision", precision_score(y_test, y_test_pred))
             mlflow.log_metric("test_recall", recall_score(y_test, y_test_pred))
-            
-            
+
+           # SERIALIZE THE MODEL 
+            os.makedirs("artifacts", exist_ok=True)
+
+            # Save XGBoost booster
+            self.best_model.save_model("artifacts/model.json")
+
+            # Save threshold
+            with open("artifacts/threshold.json", "w") as f:
+                json.dump({"threshold": float(self.best_threshold)}, f)
+
+            # Save preprocessing pipeline
+            with open("artifacts/preprocessor.pkl", "wb") as f:
+                pickle.dump(self.processor, f)# NOT COMPLETELY SURE ABOUT THIS 
+
+            # Optional metadata
+            with open("artifacts/metadata.json", "w") as f:
+                json.dump({
+                    "n_features": self.n_features,
+                    "model_type": "xgboost",
+                    "objective": "binary:logistic"
+                }, f)
+
             # Log feature importance as artifact for global interpretability
             importance_dict = self.best_model.get_score(importance_type='weight')
             importance_file = 'feature_importance.txt'

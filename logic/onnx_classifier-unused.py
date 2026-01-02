@@ -1,4 +1,5 @@
 """
+UNUSED FOR THE MOMENT
 ONNX classifier wrapper for tabular XGBoost inference.
 """
 
@@ -91,7 +92,7 @@ class ONNXBreastCancerClassifier:
         return int(proba >= self.threshold)
 
     def predict_with_confidence(self, features: np.ndarray) -> tuple:
-        """
+        """"""  """
         Returns:
             (prediction, probability)
         """
