@@ -5,7 +5,7 @@ from io import StringIO
 import os
 
 # API URL on Render
-API_URL = "https://mlops-finalproject-latest. onrender.com"
+API_URL = "https://mlops-finalproject-latest.onrender.com"
 
 def get_api_info():
     """Gets model information from the API"""
