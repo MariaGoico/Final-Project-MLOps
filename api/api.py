@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from logic. breast_cancer_predictor import BreastCancerPredictor
+from logic.breast_cancer_predictor import BreastCancerPredictor
 from io import StringIO
 import traceback
 
@@ -27,7 +27,7 @@ def clean_dataframe(df):
     original_shape = df.shape
     
     # Remove 'Unnamed' columns (created by extra commas)
-    unnamed_cols = [col for col in df. columns if 'Unnamed' in str(col)]
+    unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
     if unnamed_cols:
         print(f"🧹 Removing columns: {unnamed_cols}")
         df = df.drop(columns=unnamed_cols)
@@ -133,7 +133,7 @@ async def predict(file: UploadFile = File(...)):
     if not file.filename.endswith('.csv'):
         raise HTTPException(
             status_code=400,
-            detail="File must be a CSV (. csv extension)"
+            detail="File must be a CSV (.csv extension)"
         )
     
     try:
@@ -151,7 +151,7 @@ async def predict(file: UploadFile = File(...)):
         predictions = []
         for i, row in df.iterrows():
             try:
-                pred, prob = predictor.predict_with_confidence(row. values)
+                pred, prob = predictor.predict_with_confidence(row.values)
                 predictions.append({
                     "row": int(i),
                     "prediction": int(pred),
