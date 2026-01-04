@@ -86,7 +86,7 @@ def predict_csv(file_path):
 ## 📊 Prediction Summary
 
 **File Information:**
-- File: `{result.get('file')}`
+- File: {result.get('file')}
 - Total rows: **{summary.get('total_rows', 0)}**
 - Successful predictions: **{summary.get('successful', 0)}**
 - Errors: **{summary.get('errors', 0)}**
