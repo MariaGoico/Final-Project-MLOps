@@ -144,10 +144,8 @@ async def predict(file: UploadFile = File(...)):
         print(f"\n📁 File received: {file.filename}")
         print(f"📊 Original shape: {df.shape}")
         
-        # Clean and validate data
         df = clean_dataframe(df)
         
-        # Make predictions
         predictions = []
         for i, row in df.iterrows():
             try:
