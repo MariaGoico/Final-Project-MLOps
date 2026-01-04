@@ -13,7 +13,7 @@ app = FastAPI(
 
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor. model.num_features()
+    EXPECTED_FEATURES = predictor.model.num_features()
     print(f"✅ Modelo cargado.  Espera {EXPECTED_FEATURES} features")
 except Exception as e: 
     print(f"❌ Error cargando modelo: {e}")
