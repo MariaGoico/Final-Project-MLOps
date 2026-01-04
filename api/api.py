@@ -11,10 +11,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Load model at startup
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor.model. num_features()
+    EXPECTED_FEATURES = predictor.model.num_features()
     print(f"✅ Model loaded.  Expects {EXPECTED_FEATURES} features")
 except Exception as e:  
     print(f"❌ Error loading model: {e}")
