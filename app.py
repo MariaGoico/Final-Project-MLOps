@@ -31,10 +31,10 @@ def check_api_health():
 
 def predict_csv(file_path):
     """Performs prediction from a CSV file"""
-    if not file_path: 
+    if not file_path:
         return "❌ Please upload a CSV file", None
     
-    try:
+    try: 
         # Read CSV for preview
         df_preview = pd.read_csv(file_path)
         
@@ -46,11 +46,12 @@ def predict_csv(file_path):
             response = requests.post(f"{API_URL}/predict", files=files, timeout=30)
             
             if response.status_code != 200:
-                try:
+                try: 
                     detail = response.json().get('detail', 'Unknown error')
                 except:
                     detail = response.text
-                return f"❌ API Error ({response.status_code}): {detail}", None
+                error_msg = f"❌ API Error ({response.status_code}): {detail}"
+                return error_msg, None
             
             result = response.json()
             
@@ -64,7 +65,7 @@ def predict_csv(file_path):
                 if "error" not in pred:
                     results_data.append({
                         "Row": pred['row'],
-                        "Diagnosis": pred['diagnosis'],
+                        "Diagnosis":  pred['diagnosis'],
                         "Probability": pred['probability'],
                         "Confidence": pred['confidence']
                     })
@@ -81,20 +82,30 @@ def predict_csv(file_path):
             # Create comprehensive summary with stats
             malignant_count = sum(1 for p in predictions if p.get('prediction') == 1)
             benign_count = sum(1 for p in predictions if p.get('prediction') == 0)
+            total_preds = len(predictions)
+            
+            file_name = result.get('file', 'unknown')
+            total_rows = summary.get('total_rows', 0)
+            successful = summary.get('successful', 0)
+            errors = summary.get('errors', 0)
+            features_used = summary.get('features_used', 0)
+            
+            mal_pct = (malignant_count / total_preds * 100) if total_preds > 0 else 0
+            ben_pct = (benign_count / total_preds * 100) if total_preds > 0 else 0
             
             summary_text = f"""
 ## 📊 Prediction Summary
 
 **File Information:**
-- File: {result.get('file')}
-- Total rows: **{summary.get('total_rows', 0)}**
-- Successful predictions: **{summary.get('successful', 0)}**
-- Errors: **{summary.get('errors', 0)}**
-- Features used: **{summary.get('features_used', 0)}**
+- File: {file_name}
+- Total rows: **{total_rows}**
+- Successful predictions: **{successful}**
+- Errors: **{errors}**
+- Features used:  **{features_used}**
 
 **Diagnosis Distribution:**
-- 🔴 Malignant (M): **{malignant_count}** ({malignant_count/len(predictions)*100:.1f}%)
-- 🟢 Benign (B): **{benign_count}** ({benign_count/len(predictions)*100:.1f}%)
+- 🔴 Malignant (M): **{malignant_count}** ({mal_pct:.1f}%)
+- 🟢 Benign (B): **{benign_count}** ({ben_pct:.1f}%)
 
 ---
 
@@ -112,7 +123,7 @@ def predict_csv(file_path):
             return summary_text, results_df
             
     except requests.exceptions.Timeout:
-        return "❌ Timeout:  The API took too long to respond", None
+        return "❌ Timeout: The API took too long to respond", None
     except requests.exceptions.ConnectionError:
         return "❌ Connection error: Could not connect to the API", None
     except Exception as e:
@@ -156,7 +167,7 @@ def predict_manual(features_text):
         os.unlink(temp_path)
         
         if response.status_code != 200:
-            try: 
+            try:
                 detail = response.json().get('detail', 'Unknown error')
             except:
                 detail = response.text
@@ -175,20 +186,24 @@ def predict_manual(features_text):
         
         emoji = "🔴" if pred['prediction'] == 1 else "🟢"
         
-        return f"""
+        warning_text = "### ⚠️ Warning\nPotentially **malignant** case detected.  Medical consultation is recommended." if pred['prediction'] == 1 else "### ✅ Good News\nThe case appears to be **benign** (non-cancerous)."
+        
+        result_text = f"""
 ## {emoji} Prediction Result
 
 ### Diagnosis: **{diagnosis}**
 
-- **Probability**: `{probability}`
-- **Confidence**: `{confidence}`
+- **Probability**: {probability}
+- **Confidence**: {confidence}
 
 ---
 
-{"### ⚠️ Warning\nPotentially **malignant** case detected.  Medical consultation is recommended." if pred['prediction'] == 1 else "### ✅ Good News\nThe case appears to be **benign** (non-cancerous)."}
+{warning_text}
 
-**Note:** This prediction is for informational purposes only and should not replace professional medical diagnosis. 
+**Note:** This prediction is for informational purposes only and should not replace professional medical diagnosis.
 """
+        
+        return result_text
         
     except ValueError:
         return "❌ Error: Make sure to enter only numbers separated by commas"
@@ -204,17 +219,17 @@ custom_css = """
     width: 100%;
     border-collapse: collapse;
     margin: 10px 0;
-    font-size: 13px;
+    font-size:  13px;
 }
 .output-markdown th {
     background-color: #4CAF50;
     color:  white;
     padding: 10px;
-    text-align:  left;
+    text-align: left;
 }
 .output-markdown td {
     padding: 8px;
-    border-bottom:  1px solid #ddd;
+    border-bottom: 1px solid #ddd;
 }
 .output-markdown tr:hover {
     background-color: #f5f5f5;
@@ -233,8 +248,8 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
     with gr.Row():
         with gr.Column(scale=4):
             api_status = gr.Textbox(
-                label="API Status", 
-                value=check_api_health(), 
+                label="API Status",
+                value=check_api_health(),
                 interactive=False,
                 container=True
             )
@@ -252,7 +267,7 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
             2. The file may or may not include column headers
             3. Each row represents one patient case to be analyzed
             
-            **Supported format:** `.csv` files with 30 numeric columns
+            **Supported format:** . csv files with 30 numeric columns
             """)
             
             csv_input = gr.File(
@@ -262,8 +277,8 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
             )
             
             predict_csv_btn = gr.Button(
-                "🔍 Analyze CSV", 
-                variant="primary", 
+                "🔍 Analyze CSV",
+                variant="primary",
                 size="lg"
             )
             
@@ -286,7 +301,7 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
         # Tab 2: Manual Prediction
         with gr.Tab("✍️ Manual Input"):
             gr.Markdown("""
-            ### How to use: 
+            ### How to use:
             Enter **30 feature values** separated by commas. 
             
             **Features (in order):**
@@ -308,8 +323,8 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
             )
             
             predict_manual_btn = gr.Button(
-                "🔍 Predict", 
-                variant="primary", 
+                "🔍 Predict",
+                variant="primary",
                 size="lg"
             )
             
@@ -351,7 +366,7 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
             
             ### 📚 Wisconsin Breast Cancer Dataset
             
-            This system uses the **Wisconsin Diagnostic Breast Cancer (WDBC)** dataset, containing features computed 
+            This system uses the **Wisconsin Diagnostic Breast Cancer (WDBC)** dataset, containing features computed
             from digitized images of fine needle aspirate (FNA) of breast masses. 
             
             **Dataset Composition:**
@@ -368,21 +383,21 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
             - **Algorithm**: XGBoost Classifier
             - **Optimization**: Optuna (automated hyperparameter tuning)
             - **Experiment Tracking**: MLflow
-            - **Explainability**: SHAP values
+            - **Explainability**:  SHAP values
             - **Deployment**: Docker + FastAPI + Render
             
             ### ⚠️ Disclaimer
             
-            This tool is for **educational and research purposes only**.  Predictions should not be used as a 
-            substitute for professional medical diagnosis.  Always consult qualified healthcare providers.
+            This tool is for **educational and research purposes only**.  Predictions should not be used as a
+            substitute for professional medical diagnosis.  Always consult qualified healthcare providers. 
             """)
     
     # Footer
     gr.Markdown("""
     ---
     **🔗 Links:**  
-    [API Endpoint](https://mlops-finalproject-latest.onrender.com) • 
-    [API Documentation](https://mlops-finalproject-latest.onrender.com/docs) • 
+    [API Endpoint](https://mlops-finalproject-latest.onrender.com) •
+    [API Documentation](https://mlops-finalproject-latest.onrender.com/docs) •
     [GitHub Repository](https://github.com/MariaGoico/Final-Project-MLOps)
     
     *Built with ❤️ using FastAPI, XGBoost, and Gradio*
