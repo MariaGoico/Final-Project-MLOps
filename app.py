@@ -277,7 +277,7 @@ with gr.Blocks(css=custom_css, theme=gr.themes.Soft(), title="Breast Cancer Pred
             )
             
             predict_csv_btn = gr.Button(
-                "🔍 Analyze CSV",
+                "Predict from CSV",
                 variant="primary",
                 size="lg"
             )
