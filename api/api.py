@@ -26,13 +26,11 @@ def clean_dataframe(df):
     """
     original_shape = df.shape
     
-    # Remove 'Unnamed' columns (created by extra commas)
     unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
     if unnamed_cols:
         print(f"🧹 Removing columns: {unnamed_cols}")
         df = df.drop(columns=unnamed_cols)
     
-    # Remove completely empty columns (all NaN)
     df = df.dropna(axis=1, how='all')
     
     # Remove columns without name or only spaces
