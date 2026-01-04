@@ -47,3 +47,27 @@ jobs:
           file: ./Dockerfile
       - name: Trigger Render Deploy
         run: curl -X POST "https://api.render.com/deploy/srv-d52ibj2li9vc73f8o800?key=${{ secrets.RENDER_DEPLOY_HOOK_KEY }}"
+
+  deploy-hf:
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Checkout repository with all branches
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      
+      - name: Switch to hf-space branch
+        run: |
+          git fetch origin hf-space
+          git checkout hf-space
+      
+      - name: Add Hugging Face remote
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+        run: git remote add huggingface https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/mlops-finalproject.git
+
+      - name: Push hf-space branch to Hugging Face
+        run: git push huggingface hf-space:main --force
