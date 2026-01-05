@@ -235,6 +235,9 @@ class XGBoostBreastCancerClassifier:
         feature_names = [f"feature_{i}" for i in range(X_train.shape[1])]
         
         # Start MLflow parent run
+        if mlflow.active_run() is not None:
+            mlflow.end_run()
+            
         with mlflow.start_run(run_name="xgboost_optimization"):
             
             # Log dataset information
