@@ -1,8 +1,16 @@
+import sys
+import os
+from pathlib import Path
+
+# Añadir directorio raíz al path para encontrar logic/
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from logic.breast_cancer_predictor import BreastCancerPredictor
-from metrics_tracker import ModelMetricsTracker, prediction_confidence_by_diagnosis
+from api.metrics_tracker import ModelMetricsTracker, prediction_confidence_by_diagnosis
 from io import StringIO
 import traceback
 import time
