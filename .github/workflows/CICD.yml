@@ -110,7 +110,7 @@ jobs:
           file: ./Dockerfile
       
       - name:  Trigger Render Deploy
-        run: curl -X POST "https://api.render.com/deploy/srv-d52ibj2li9vc73f8o800? key=${{ secrets.RENDER_DEPLOY_HOOK_KEY }}"
+        run: curl -X POST "https://api.render.com/deploy/srv-d52ibj2li9vc73f8o800?key=${{ secrets.RENDER_DEPLOY_HOOK_KEY }}"
 
   deploy-hf:
     runs-on: ubuntu-latest
