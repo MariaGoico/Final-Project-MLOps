@@ -4,6 +4,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from logic.breast_cancer_predictor import BreastCancerPredictor
 from io import StringIO
 import traceback
+from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
 
 app = FastAPI(
     title="Breast Cancer Prediction API",
@@ -11,14 +13,60 @@ app = FastAPI(
     version="1.0.0"
 )
 
-try:
+# ========================================
+# PROMETHEUS METRICS
+# ========================================
+
+# Counter:  Total prediction requests
+prediction_requests_total = Counter(
+    'prediction_requests_total',
+    'Total number of prediction requests',
+    ['status']
+)
+
+# Counter: Predictions by diagnosis type
+predictions_by_diagnosis_total = Counter(
+    'predictions_by_diagnosis_total',
+    'Total predictions by diagnosis type',
+    ['diagnosis']
+)
+
+# Gauge: Model loaded status
+model_loaded = Gauge(
+    'model_loaded',
+    'Whether the model is loaded (1=loaded, 0=not loaded)'
+)
+
+# Gauge: Expected features
+expected_features_gauge = Gauge(
+    'expected_features',
+    'Number of features expected by the model'
+)
+
+# Counter: Total rows processed
+rows_processed_total = Counter(
+    'rows_processed_total',
+    'Total number of rows processed',
+    ['status']
+)
+
+# ========================================
+# MODEL LOADING
+# ========================================
+
+try: 
     predictor = BreastCancerPredictor("artifacts")
     EXPECTED_FEATURES = predictor.model.num_features()
     print(f"✅ Model loaded.  Expects {EXPECTED_FEATURES} features")
-except Exception as e:  
-    print(f"❌ Error loading model: {e}")
+    model_loaded.set(1)
+    expected_features_gauge.set(EXPECTED_FEATURES)
+except Exception as e:
+    print(f"❌ Error loading model:  {e}")
     predictor = None
     EXPECTED_FEATURES = 30
+    model_loaded.set(0)
+    expected_features_gauge.set(EXPECTED_FEATURES)
+
 
 def clean_dataframe(df):
     """
@@ -27,7 +75,7 @@ def clean_dataframe(df):
     original_shape = df.shape
     
     unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
-    if unnamed_cols:
+    if unnamed_cols: 
         print(f"🧹 Removing columns: {unnamed_cols}")
         df = df.drop(columns=unnamed_cols)
     
@@ -49,8 +97,8 @@ def clean_dataframe(df):
     # Check for missing values (after cleaning)
     missing = df.isnull().sum()
     if missing.sum() > 0:
-        missing_info = missing[missing > 0].to_dict()
-        raise ValueError(f"CSV contains missing values: {missing_info}")
+        missing_info = missing[missing > 0]. to_dict()
+        raise ValueError(f"CSV contains missing values:  {missing_info}")
     
     # Adjust number of features
     current_features = df.shape[1]
@@ -67,7 +115,7 @@ def clean_dataframe(df):
         print(f"⚠️ {current_features - EXPECTED_FEATURES} extra features, taking first {EXPECTED_FEATURES}...")
         df = df.iloc[:, :EXPECTED_FEATURES]
     
-    print(f"✅ Final shape: {df.shape}")
+    print(f"✅ Final shape: {df. shape}")
     return df
 
 
@@ -81,7 +129,8 @@ async def home():
         "endpoints": {
             "POST /predict": "Upload CSV for prediction",
             "GET /health": "API health status",
-            "GET /info": "Model information"
+            "GET /info": "Model information",
+            "GET /metrics": "Prometheus metrics"
         }
     }
 
@@ -91,7 +140,7 @@ async def health():
     """Checks API health"""
     return {
         "status": "healthy" if predictor else "unhealthy",
-        "model_loaded":  predictor is not None,
+        "model_loaded": predictor is not None,
         "expected_features": EXPECTED_FEATURES
     }
 
@@ -99,18 +148,33 @@ async def health():
 @app.get("/info")
 async def info():
     """Detailed model information"""
-    if not predictor:
+    if not predictor: 
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     return {
         "model_type": "XGBoost Classifier",
         "expected_features": EXPECTED_FEATURES,
-        "threshold": float(predictor.threshold),
+        "threshold":  float(predictor.threshold),
         "classes": {
             "0": "Benign (B)",
             "1": "Malignant (M)"
         }
     }
+
+
+@app. get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint
+    
+    Exposes metrics for Prometheus scraping. 
+    Uses prometheus_client library with Counters and Gauges.
+    Returns generate_latest() in Prometheus format.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
 
 
 @app.post("/predict")
@@ -121,7 +185,8 @@ async def predict(file: UploadFile = File(...)):
     The CSV must contain 30 columns with features from the Wisconsin Breast Cancer dataset. 
     'Unnamed' columns and empty values are automatically removed.
     """
-    if not predictor:  
+    if not predictor: 
+        prediction_requests_total. labels(status='error').inc()
         raise HTTPException(
             status_code=503,
             detail="Model not loaded.  Please check server logs."
@@ -129,6 +194,7 @@ async def predict(file: UploadFile = File(...)):
     
     # Validate file type
     if not file.filename.endswith('.csv'):
+        prediction_requests_total.labels(status='error').inc()
         raise HTTPException(
             status_code=400,
             detail="File must be a CSV (.csv extension)"
@@ -140,7 +206,7 @@ async def predict(file: UploadFile = File(...)):
         df = pd.read_csv(StringIO(contents.decode('utf-8')))
         
         print(f"\n📁 File received: {file.filename}")
-        print(f"📊 Original shape: {df.shape}")
+        print(f"📊 Original shape: {df. shape}")
         
         df = clean_dataframe(df)
         
@@ -148,6 +214,12 @@ async def predict(file: UploadFile = File(...)):
         for i, row in df.iterrows():
             try:
                 pred, prob = predictor.predict_with_confidence(row.values)
+                
+                # Update Prometheus metrics
+                diagnosis = "Malignant" if pred == 1 else "Benign"
+                predictions_by_diagnosis_total.labels(diagnosis=diagnosis).inc()
+                rows_processed_total.labels(status='success').inc()
+                
                 predictions.append({
                     "row": int(i),
                     "prediction": int(pred),
@@ -155,7 +227,8 @@ async def predict(file: UploadFile = File(...)):
                     "probability": round(float(prob), 4),
                     "confidence": f"{float(prob) * 100:.2f}%"
                 })
-            except Exception as e:  
+            except Exception as e:
+                rows_processed_total.labels(status='error').inc()
                 predictions.append({
                     "row": int(i),
                     "error": str(e)
@@ -165,9 +238,12 @@ async def predict(file: UploadFile = File(...)):
         success_count = sum(1 for p in predictions if "error" not in p)
         error_count = len(predictions) - success_count
         
+        # Increment successful prediction requests counter
+        prediction_requests_total.labels(status='success').inc()
+        
         return {
             "success": True,
-            "file":  file.filename,
+            "file": file.filename,
             "predictions": predictions,
             "summary": {
                 "total_rows": len(predictions),
@@ -177,16 +253,19 @@ async def predict(file: UploadFile = File(...)):
             }
         }
     
-    except ValueError as e:  
+    except ValueError as e:
+        prediction_requests_total.labels(status='error').inc()
         raise HTTPException(status_code=400, detail=str(e))
     
     except pd.errors.ParserError as e:
+        prediction_requests_total.labels(status='error').inc()
         raise HTTPException(
             status_code=400,
             detail=f"Invalid CSV format: {str(e)}"
         )
     
     except Exception as e:
+        prediction_requests_total.labels(status='error').inc()
         print(f"❌ Unexpected error: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
