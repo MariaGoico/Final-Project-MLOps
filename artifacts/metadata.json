@@ -1,1 +1,0 @@
-{"n_features": 31, "model_type": "xgboost", "objective": "binary:logistic"}
