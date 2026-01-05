@@ -47,7 +47,8 @@ jobs:
         env:
           MLFLOW_TRACKING_URI: ${{ env.MLFLOW_DIR }}
         run: |
-          uv run python logic/model.py
+          uv run python -m logic.model
+
       
       - name:  Upload artifacts
         uses: actions/upload-artifact@v4
