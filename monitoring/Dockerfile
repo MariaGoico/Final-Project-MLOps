@@ -1,10 +1,12 @@
 FROM prom/prometheus:latest
 
-# Install envsubst for environment variable substitution
+# Switch to root to install packages
 USER root
+
+# Install gettext for envsubst (environment variable substitution)
 RUN apk add --no-cache gettext
 
-# Copy configuration files
+# Copy configuration template and entrypoint
 COPY prometheus.yml.template /etc/prometheus/prometheus.yml.template
 COPY entrypoint.sh /entrypoint.sh
 
@@ -14,8 +16,8 @@ RUN chmod +x /entrypoint.sh
 # Expose Prometheus port
 EXPOSE 9090
 
-# Switch back to prometheus user
+# Switch back to nobody user for security
 USER nobody
 
-# Run entrypoint script
+# Use entrypoint script
 ENTRYPOINT ["/entrypoint.sh"]
