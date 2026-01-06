@@ -362,13 +362,27 @@ async def stats():
 @app.get("/metrics")
 async def metrics():
     """Prometheus metrics endpoint"""
-    calculate_health_score()
-    metrics_tracker.calculate_metrics()
+    try:
+        # Calculate health and metrics
+        calculate_health_score()
+        metrics_tracker.calculate_metrics()
+        
+        # Generate Prometheus format
+        return Response(
+            content=generate_latest(),
+            media_type=CONTENT_TYPE_LATEST
+        )
     
-    return Response(
-        content=generate_latest(),
-        media_type=CONTENT_TYPE_LATEST
-    )
+    except Exception as e:
+        print(f"❌ Error generating metrics: {e}")
+        print(traceback.format_exc())
+        
+        # Return error in plain text (not JSON, for Prometheus compatibility)
+        return Response(
+            content=f"# Error generating metrics:  {str(e)}\n",
+            media_type="text/plain",
+            status_code=500
+        )
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(... )):
