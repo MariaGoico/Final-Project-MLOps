@@ -7,16 +7,19 @@ import mlflow
 import mlflow.xgboost
 from sklearn.metrics import (
     roc_auc_score, average_precision_score, 
-    f1_score, precision_score, recall_score
+    f1_score, precision_score, recall_score,
+    accuracy_score, confusion_matrix,
+    precision_recall_curve, auc as sklearn_auc
 )
 import pickle
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.metrics import roc_curve, auc
 import json
 import shap
 import onnxmltools
 from onnxmltools.convert.common.data_types import FloatTensorType
+from datetime import datetime
 
 from logic.data_module import CancerDataProcessor
 from logic.utilities import DataValidator
@@ -93,7 +96,7 @@ class XGBoostBreastCancerClassifier:
         """
         Optuna objective function for hyperparameter optimization.
         Uses threshold-independent metrics (ROC-AUC) for optimization.
-        Logs each trial as a child run in MLflow.
+        Logs each trial as a child run in MLflow. 
         """
         # Suggest hyperparameters
         params = {
@@ -162,7 +165,7 @@ class XGBoostBreastCancerClassifier:
         thresholds = np.arange(0.1, 0.9, 0.01)
         f1_scores = []
         
-        for threshold in thresholds:
+        for threshold in thresholds: 
             y_pred = (y_pred_proba >= threshold).astype(int)
             f1 = f1_score(y_val, y_pred)
             f1_scores.append(f1)
@@ -220,10 +223,91 @@ class XGBoostBreastCancerClassifier:
 
         mlflow.log_artifact("artifacts/shap_global.json")
 
+    def save_validation_metrics(self, y_test, y_test_pred, y_test_proba, X_train):
+        """
+        Save validation metrics and feature baseline for production monitoring
+        """
+        # Calculate all metrics
+        tn, fp, fn, tp = confusion_matrix(y_test, y_test_pred).ravel()
+        
+        # Calculate PR-AUC
+        precision_curve, recall_curve, _ = precision_recall_curve(y_test, y_test_proba)
+        pr_auc = sklearn_auc(recall_curve, precision_curve)
+        
+        # Specificity = TN / (TN + FP)
+        specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+        
+        # Create metrics dictionary
+        validation_metrics = {
+            'f1_score': float(f1_score(y_test, y_test_pred)),
+            'accuracy': float(accuracy_score(y_test, y_test_pred)),
+            'precision': float(precision_score(y_test, y_test_pred)),
+            'recall': float(recall_score(y_test, y_test_pred)),
+            'specificity': specificity,
+            'roc_auc': float(roc_auc_score(y_test, y_test_proba)),
+            'pr_auc': float(pr_auc),
+            'confusion_matrix': {
+                'tp': int(tp),
+                'tn': int(tn),
+                'fp': int(fp),
+                'fn': int(fn)
+            },
+            'model_info': {
+                'algorithm': 'XGBoost',
+                'version': '1.0.0',
+                'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'features': int(self.n_features),
+                'train_samples': int(X_train.shape[0]),
+                'test_samples': int(len(y_test)),
+                'threshold': float(self.best_threshold)
+            }
+        }
+        
+        # Save validation metrics
+        os.makedirs("artifacts", exist_ok=True)
+        with open('artifacts/validation_metrics.json', 'w') as f:
+            json.dump(validation_metrics, f, indent=2)
+        
+        print("\n" + "="*60)
+        print("✅ Validation metrics saved to artifacts/validation_metrics.json")
+        print("="*60)
+        print(json.dumps(validation_metrics, indent=2))
+        print("="*60 + "\n")
+        
+        # Log to MLflow
+        mlflow.log_artifact('artifacts/validation_metrics.json')
+        
+        return validation_metrics
+
+    def save_feature_baseline(self, X_train):
+        """
+        Save feature statistics (mean and std) for drift detection in production
+        """
+        # Calculate statistics
+        feature_means = X_train.mean(axis=0)
+        feature_stds = X_train.std(axis=0)
+        
+        # Save as NPZ
+        os.makedirs("artifacts", exist_ok=True)
+        np.savez(
+            'artifacts/feature_baseline.npz',
+            means=feature_means,
+            stds=feature_stds
+        )
+        
+        print("="*60)
+        print(f"✅ Feature baseline saved:  {len(feature_means)} features")
+        print(f"   Mean range: [{feature_means.min():.4f}, {feature_means.max():.4f}]")
+        print(f"   Std range: [{feature_stds.min():.4f}, {feature_stds.max():.4f}]")
+        print("="*60 + "\n")
+        
+        # Log to MLflow
+        mlflow.log_artifact('artifacts/feature_baseline.npz')
+
     def train_and_optimize(self, n_trials=100):
         """
         Main training loop with Optuna optimization and MLflow tracking.
-        Optimized for CI/CD pipeline.
+        Optimized for CI/CD pipeline. 
         """
         # Load data
         X_train,X_val,X_test,y_train,y_val,y_test = self.load_and_prepare_data()
@@ -266,7 +350,7 @@ class XGBoostBreastCancerClassifier:
             mlflow.log_metric("best_cv_roc_auc", study.best_value)
             
             # Train final model with best parameters
-            best_params = study.best_params.copy()
+            best_params = study.best_params. copy()
             best_params.update({
                 'objective': 'binary:logistic',
                 'eval_metric': 'auc',
@@ -302,12 +386,20 @@ class XGBoostBreastCancerClassifier:
             y_test_proba = self.best_model.predict(dtest)
             y_test_pred = (y_test_proba >= self.best_threshold).astype(int)
 
-
+            # Log test metrics to MLflow
             mlflow.log_metric("test_roc_auc", roc_auc_score(y_test, y_test_proba))
             mlflow.log_metric("test_pr_auc", average_precision_score(y_test, y_test_proba))
             mlflow.log_metric("test_f1", f1_score(y_test, y_test_pred))
             mlflow.log_metric("test_precision", precision_score(y_test, y_test_pred))
             mlflow.log_metric("test_recall", recall_score(y_test, y_test_pred))
+
+            # ===== SAVE VALIDATION METRICS FOR PRODUCTION MONITORING =====
+            print("\n" + "="*60)
+            print("📊 Saving validation metrics for production monitoring...")
+            print("="*60)
+            
+            self.save_validation_metrics(y_test, y_test_pred, y_test_proba, X_train)
+            self.save_feature_baseline(X_train)
 
            # SERIALIZE THE MODEL 
             os.makedirs("artifacts", exist_ok=True)
@@ -321,7 +413,7 @@ class XGBoostBreastCancerClassifier:
 
             # Save preprocessing pipeline
             with open("artifacts/preprocessor.pkl", "wb") as f:
-                pickle.dump(self.processor, f)# NOT COMPLETELY SURE ABOUT THIS 
+                pickle.dump(self.processor, f)
 
             # Optional metadata
             with open("artifacts/metadata.json", "w") as f:
@@ -338,7 +430,7 @@ class XGBoostBreastCancerClassifier:
                 for feat, score in sorted(importance_dict.items(), 
                                          key=lambda x: x[1], 
                                          reverse=True):
-                    f.write(f"{feat}: {score}\n")
+                    f.write(f"{feat}:  {score}\n")
             mlflow.log_artifact(importance_file)
             os.remove(importance_file)
             
@@ -368,13 +460,13 @@ class XGBoostBreastCancerClassifier:
             print(f"Optimal Threshold: {self.best_threshold:.4f}")
             print(f"Test F1 Score: {f1_score(y_test, y_test_pred):.4f}")
             print(f"Test Precision: {precision_score(y_test, y_test_pred):.4f}")
-            print(f"Test Recall: {recall_score(y_test, y_test_pred):.4f}")
+            print(f"Test Recall:  {recall_score(y_test, y_test_pred):.4f}")
             print(f"{'='*60}\n")
             
         return self.best_model, self.best_threshold
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     set_seed() #set a fixed seed   
     classifier = XGBoostBreastCancerClassifier(
         data_path='data/data.csv'

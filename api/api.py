@@ -17,6 +17,7 @@ import time
 from datetime import datetime
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
+import json
 
 app = FastAPI(
     title="Breast Cancer Prediction API",
@@ -128,29 +129,85 @@ missing_values_total = Counter(
 # ========================================
 # INITIALIZE METRICS TRACKER
 # ========================================
-metrics_tracker = ModelMetricsTracker(window_size=100)
+metrics_tracker = ModelMetricsTracker(window_size=1000)
 
 # ========================================
 # MODEL LOADING
 # ========================================
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor.model. num_features()
-    print(f"✅ Model loaded.   Expects {EXPECTED_FEATURES} features")
+    EXPECTED_FEATURES = predictor.model.num_features()
+    print(f"✅ Model loaded. Expects {EXPECTED_FEATURES} features")
     model_loaded.set(1)
     expected_features_gauge.set(EXPECTED_FEATURES)
     api_start_time.set(time.time())
     
-    # TODO: Load feature baseline from training data
-    # Example: 
-    # baseline_stats = np.load('artifacts/feature_baseline.npz')
-    # metrics_tracker.set_feature_baseline(
-    #     baseline_stats['means'], 
-    #     baseline_stats['stds']
-    # )
+    # ===== LOAD VALIDATION METRICS =====
+    print("\n" + "="*60)
+    print("📊 Loading validation metrics for monitoring...")
+    print("="*60)
     
-except Exception as e: 
+    try:
+        validation_metrics_path = Path("artifacts/validation_metrics.json")
+        
+        if validation_metrics_path.exists():
+            with open(validation_metrics_path, 'r') as f:
+                validation_metrics = json.load(f)
+            
+            metrics_tracker.load_validation_metrics(validation_metrics)
+            print("✅ Validation metrics loaded from artifacts/validation_metrics.json")
+        else:
+            print("⚠️  validation_metrics.json not found. Using placeholder metrics.")
+            # Set placeholder metrics
+            metrics_tracker.load_validation_metrics({
+                'f1_score': 0.0,
+                'accuracy': 0.0,
+                'precision': 0.0,
+                'recall': 0.0,
+                'specificity': 0.0,
+                'roc_auc': 0.0,
+                'pr_auc': 0.0,
+                'confusion_matrix':  {'tp': 0, 'tn': 0, 'fp': 0, 'fn':  0},
+                'model_info': {
+                    'algorithm': 'XGBoost',
+                    'version': 'unknown',
+                    'training_date': 'unknown',
+                    'features':  str(EXPECTED_FEATURES)
+                }
+            })
+    
+    except Exception as e: 
+        print(f"⚠️  Error loading validation metrics: {e}")
+        print("   Using placeholder metrics.")
+    
+    # ===== LOAD FEATURE BASELINE FOR DRIFT DETECTION =====
+    print("\n" + "="*60)
+    print("🔍 Loading feature baseline for drift detection...")
+    print("="*60)
+    
+    try:
+        baseline_path = Path("artifacts/feature_baseline.npz")
+        
+        if baseline_path.exists():
+            baseline = np.load(baseline_path)
+            metrics_tracker.set_feature_baseline(
+                means=baseline['means'],
+                stds=baseline['stds']
+            )
+            print("✅ Feature baseline loaded successfully")
+        else:
+            print("⚠️  feature_baseline.npz not found.")
+            print("   Drift detection will be disabled.")
+    
+    except Exception as e: 
+        print(f"⚠️  Error loading feature baseline: {e}")
+        print("   Drift detection will be disabled.")
+    
+    print("="*60 + "\n")
+    
+except Exception as e:
     print(f"❌ Error loading model: {e}")
+    print(traceback.format_exc())
     predictor = None
     EXPECTED_FEATURES = 30
     model_loaded.set(0)
@@ -169,7 +226,7 @@ async def track_requests(request: Request, call_next):
     endpoint_requests_total.labels(
         endpoint=request.url.path,
         method=request.method,
-        status_code=response. status_code
+        status_code=response.status_code
     ).inc()
     
     if request.url.path == "/predict":
@@ -202,7 +259,7 @@ def clean_dataframe(df):
     # Remove unnamed columns
     unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
     if unnamed_cols:
-        print(f"🧹 Removing columns: {unnamed_cols}")
+        print(f"🧹 Removing columns:  {unnamed_cols}")
         df = df.drop(columns=unnamed_cols)
     
     # Remove all-empty columns
@@ -218,13 +275,13 @@ def clean_dataframe(df):
     # Convert to numeric
     for col in df.columns:
         if not pd.api.types.is_numeric_dtype(df[col]):
-            df[col] = pd. to_numeric(df[col], errors='coerce')
+            df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # Check for missing values
     missing = df.isnull().sum().sum()
     if missing > 0:
         missing_values_total.inc(missing)
-        missing_info = df. isnull().sum()[df.isnull().sum() > 0]. to_dict()
+        missing_info = df.isnull().sum()[df.isnull().sum() > 0].to_dict()
         raise ValueError(f"CSV contains missing values: {missing_info}")
     
     # Adjust features
@@ -253,6 +310,10 @@ async def home():
         "status": "ready" if predictor else "error:  model not loaded",
         "model_features": EXPECTED_FEATURES,
         "health_score": calculate_health_score(),
+        "monitoring": {
+            "validation_metrics_loaded": metrics_tracker.get_stats().get('has_baseline', False),
+            "drift_detection_enabled": metrics_tracker.feature_baseline is not None
+        },
         "endpoints": {
             "POST /predict": "Upload CSV for prediction",
             "GET /health": "API health status",
@@ -286,10 +347,14 @@ async def info():
         "classes": {
             "0": "Benign (B)",
             "1": "Malignant (M)"
+        },
+        "monitoring": {
+            "validation_metrics_available": True,
+            "drift_detection_enabled": metrics_tracker.feature_baseline is not None
         }
     }
 
-@app. get("/stats")
+@app.get("/stats")
 async def stats():
     """Current prediction statistics"""
     return metrics_tracker.get_stats()
@@ -306,7 +371,7 @@ async def metrics():
     )
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(file: UploadFile = File(... )):
     """Predict breast cancer diagnosis from CSV file"""
     request_start_time = time.time()
     
@@ -327,7 +392,7 @@ async def predict(file: UploadFile = File(...)):
         csv_file_size_bytes.observe(file_size)
         
         df = pd.read_csv(StringIO(contents.decode('utf-8')))
-        print(f"\n📁 File: {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
+        print(f"\n📁 File:  {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
         
         df = clean_dataframe(df)
         
@@ -340,8 +405,8 @@ async def predict(file: UploadFile = File(...)):
             try:
                 # Predict with timing
                 pred_start = time.time()
-                pred, prob = predictor.predict_with_confidence(row. values)
-                pred_duration = time. time() - pred_start
+                pred, prob = predictor.predict_with_confidence(row.values)
+                pred_duration = time.time() - pred_start
                 
                 # Update metrics
                 prediction_latency.observe(pred_duration)
@@ -361,7 +426,7 @@ async def predict(file: UploadFile = File(...)):
                 metrics_tracker.add_prediction(pred, prob, row.values)
                 
                 predictions.append({
-                    "row": int(i),
+                    "row":  int(i),
                     "prediction": int(pred),
                     "diagnosis": "Malignant (M)" if pred == 1 else "Benign (B)",
                     "probability": round(float(prob), 4),
@@ -390,7 +455,7 @@ async def predict(file: UploadFile = File(...)):
         request_duration = time.time() - request_start_time
         
         return {
-            "success":  True,
+            "success": True,
             "file":  file.filename,
             "predictions": predictions,
             "summary": {
@@ -404,9 +469,9 @@ async def predict(file: UploadFile = File(...)):
                 "file_size_bytes": file_size
             },
             "statistics": {
-                "malignant_count": sum(1 for p in predictions if p. get('prediction') == 1),
-                "benign_count": sum(1 for p in predictions if p. get('prediction') == 0),
-                "avg_confidence": round(np.mean([p. get('probability', 0) for p in predictions if 'probability' in p]), 4),
+                "malignant_count": sum(1 for p in predictions if p.get('prediction') == 1),
+                "benign_count": sum(1 for p in predictions if p.get('prediction') == 0),
+                "avg_confidence": round(np.mean([p.get('probability', 0) for p in predictions if 'probability' in p]), 4),
                 "current_hour": current_hour
             }
         }
@@ -421,8 +486,8 @@ async def predict(file: UploadFile = File(...)):
         prediction_errors_total.labels(error_type='parser_error').inc()
         raise HTTPException(status_code=400, detail=f"Invalid CSV format: {str(e)}")
     
-    except Exception as e: 
-        prediction_requests_total. labels(status='error').inc()
-        prediction_errors_total. labels(error_type='unknown').inc()
+    except Exception as e:
+        prediction_requests_total.labels(status='error').inc()
+        prediction_errors_total.labels(error_type='unknown').inc()
         print(f"❌ Unexpected error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

@@ -1,162 +1,251 @@
 """
 Metrics Tracker for ML Model Monitoring
-Tracks predictions, calculates performance metrics, and detects drift
+- Model validation metrics (from test/validation set)
+- Production metrics (from live predictions)
 """
 
 import numpy as np
 from collections import deque
-from sklearn.metrics import f1_score, roc_auc_score, precision_recall_curve, auc
-from prometheus_client import Gauge, Histogram
+from prometheus_client import Gauge, Histogram, Info
 
 # ========================================
-# ML PERFORMANCE METRICS
+# MODEL VALIDATION METRICS (STATIC)
 # ========================================
-model_f1_score = Gauge(
-    'model_f1_score',
-    'F1 Score of the model (rolling window)'
+# These are loaded once from the model's validation results
+
+model_f1_score_validation = Gauge(
+    'model_f1_score_validation',
+    'F1 Score from validation/test set'
 )
 
-model_roc_auc = Gauge(
-    'model_roc_auc_score',
-    'ROC-AUC Score of the model (rolling window)'
+model_accuracy_validation = Gauge(
+    'model_accuracy_validation',
+    'Accuracy from validation/test set'
 )
 
-model_pr_auc = Gauge(
-    'model_pr_auc_score',
-    'Precision-Recall AUC Score (rolling window)'
+model_precision_validation = Gauge(
+    'model_precision_validation',
+    'Precision from validation/test set'
 )
 
-model_precision = Gauge(
-    'model_precision',
-    'Precision of the model (rolling window)'
+model_recall_validation = Gauge(
+    'model_recall_validation',
+    'Recall from validation/test set'
 )
 
-model_recall = Gauge(
-    'model_recall',
-    'Recall of the model (rolling window)'
+model_specificity_validation = Gauge(
+    'model_specificity_validation',
+    'Specificity (TNR) from validation/test set'
+)
+
+model_roc_auc_validation = Gauge(
+    'model_roc_auc_validation',
+    'ROC-AUC Score from validation/test set'
+)
+
+model_pr_auc_validation = Gauge(
+    'model_pr_auc_validation',
+    'Precision-Recall AUC from validation/test set'
+)
+
+# Confusion matrix components
+model_true_positives = Gauge(
+    'model_true_positives_validation',
+    'True Positives from validation set'
+)
+
+model_true_negatives = Gauge(
+    'model_true_negatives_validation',
+    'True Negatives from validation set'
+)
+
+model_false_positives = Gauge(
+    'model_false_positives_validation',
+    'False Positives from validation set'
+)
+
+model_false_negatives = Gauge(
+    'model_false_negatives_validation',
+    'False Negatives from validation set'
+)
+
+# Model info
+model_info = Info(
+    'model_info',
+    'Model metadata and version information'
 )
 
 # ========================================
-# DRIFT DETECTION METRICS
+# PRODUCTION METRICS (DYNAMIC)
 # ========================================
+
+# Drift detection
 feature_mean_drift = Gauge(
     'feature_mean_drift',
     'Mean value drift from training baseline',
     ['feature_index']
 )
 
-feature_std_drift = Gauge(
-    'feature_std_drift',
-    'Standard deviation drift from training baseline',
-    ['feature_index']
-)
-
 prediction_drift_score = Gauge(
     'prediction_drift_score',
-    'Overall prediction distribution drift score'
+    'Malignant prediction rate in production (distribution drift)'
 )
 
-# ========================================
-# FAIRNESS METRICS
-# ========================================
+confidence_drift_score = Gauge(
+    'confidence_drift_score',
+    'Average prediction confidence in production'
+)
+
+# Confidence by diagnosis
 prediction_confidence_by_diagnosis = Histogram(
     'prediction_confidence_by_diagnosis',
-    'Confidence distribution by diagnosis',
+    'Confidence distribution by diagnosis in production',
     ['diagnosis'],
     buckets=[0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.99, 1.0]
 )
 
-false_positive_rate = Gauge(
-    'false_positive_rate',
-    'False positive rate (requires ground truth)'
+avg_confidence_benign = Gauge(
+    'avg_confidence_benign_production',
+    'Average confidence for Benign predictions in production'
 )
 
-false_negative_rate = Gauge(
-    'false_negative_rate',
-    'False negative rate (requires ground truth)'
+avg_confidence_malignant = Gauge(
+    'avg_confidence_malignant_production',
+    'Average confidence for Malignant predictions in production'
+)
+
+# Production distribution
+production_malignant_rate = Gauge(
+    'production_malignant_rate',
+    'Percentage of malignant predictions in production'
+)
+
+production_benign_rate = Gauge(
+    'production_benign_rate',
+    'Percentage of benign predictions in production'
 )
 
 
-class ModelMetricsTracker: 
+class ModelMetricsTracker:
     """
-    Tracks model predictions and calculates performance metrics
+    Tracks both validation and production metrics
     
-    Features:
-    - Rolling window for recent predictions
-    - ML metrics (F1, ROC-AUC, PR-AUC, Precision, Recall)
-    - Drift detection
-    - Fairness monitoring
+    Validation metrics:  Loaded once from model evaluation
+    Production metrics: Updated with each prediction
     """
     
-    def __init__(self, window_size=100):
-        """
-        Initialize metrics tracker
-        
-        Args: 
-            window_size: Number of recent predictions to track
-        """
+    def __init__(self, window_size=1000):
         self.window_size = window_size
+        
+        # Production data
         self.predictions = deque(maxlen=window_size)
         self.probabilities = deque(maxlen=window_size)
-        self.true_labels = deque(maxlen=window_size)
         self.feature_baseline = None
+        
+        # Counters
         self.malignant_count = 0
         self.benign_count = 0
         
-        print(f"📊 ModelMetricsTracker initialized with window_size={window_size}")
+        # Confidence tracking
+        self.benign_confidences = deque(maxlen=window_size)
+        self.malignant_confidences = deque(maxlen=window_size)
+        
+        print(f"📊 ModelMetricsTracker initialized (window_size={window_size})")
+    
+    # ========================================
+    # VALIDATION METRICS (load once)
+    # ========================================
+    
+    def load_validation_metrics(self, metrics_dict):
+        """
+        Load validation metrics from model evaluation
+        
+        Args:
+            metrics_dict: Dictionary with keys:
+                - f1_score
+                - accuracy
+                - precision
+                - recall
+                - specificity
+                - roc_auc
+                - pr_auc
+                - confusion_matrix:  {'tp', 'tn', 'fp', 'fn'}
+                - model_info:  {'version', 'algorithm', 'training_date', ... }
+        """
+        try:
+            # Performance metrics
+            if 'f1_score' in metrics_dict:
+                model_f1_score_validation.set(float(metrics_dict['f1_score']))
+            
+            if 'accuracy' in metrics_dict:
+                model_accuracy_validation.set(float(metrics_dict['accuracy']))
+            
+            if 'precision' in metrics_dict:
+                model_precision_validation.set(float(metrics_dict['precision']))
+            
+            if 'recall' in metrics_dict:
+                model_recall_validation.set(float(metrics_dict['recall']))
+            
+            if 'specificity' in metrics_dict:
+                model_specificity_validation.set(float(metrics_dict['specificity']))
+            
+            if 'roc_auc' in metrics_dict:
+                model_roc_auc_validation.set(float(metrics_dict['roc_auc']))
+            
+            if 'pr_auc' in metrics_dict:
+                model_pr_auc_validation. set(float(metrics_dict['pr_auc']))
+            
+            # Confusion matrix
+            if 'confusion_matrix' in metrics_dict:
+                cm = metrics_dict['confusion_matrix']
+                model_true_positives.set(int(cm. get('tp', 0)))
+                model_true_negatives. set(int(cm.get('tn', 0)))
+                model_false_positives.set(int(cm.get('fp', 0)))
+                model_false_negatives.set(int(cm.get('fn', 0)))
+            
+            # Model info
+            if 'model_info' in metrics_dict: 
+                model_info.info(metrics_dict['model_info'])
+            
+            print("✅ Validation metrics loaded successfully")
+            print(f"   F1: {metrics_dict. get('f1_score', 'N/A')}")
+            print(f"   Accuracy: {metrics_dict.get('accuracy', 'N/A')}")
+            print(f"   ROC-AUC: {metrics_dict.get('roc_auc', 'N/A')}")
+            
+        except Exception as e:
+            print(f"⚠️  Error loading validation metrics: {e}")
+    
+    # ========================================
+    # PRODUCTION METRICS (update continuously)
+    # ========================================
     
     def set_feature_baseline(self, means, stds):
-        """
-        Set baseline feature statistics from training data
-        
-        Args: 
-            means: Array of mean values for each feature
-            stds: Array of standard deviations for each feature
-        """
+        """Set baseline feature statistics from training data"""
         self.feature_baseline = {
             'means': np.array(means),
             'stds': np.array(stds)
         }
-        print(f"✅ Feature baseline set:  {len(means)} features")
+        print(f"✅ Feature baseline set: {len(means)} features")
     
     def add_prediction(self, pred, prob, features=None):
-        """
-        Add a new prediction to the tracker
-        
-        Args:
-            pred: Predicted class (0 or 1)
-            prob: Prediction probability
-            features: Feature vector (optional, for drift detection)
-        """
+        """Add a production prediction"""
         self.predictions.append(pred)
         self.probabilities.append(prob)
         
-        # Update diagnosis counts
-        if pred == 1:
+        # Track by diagnosis
+        if pred == 1: 
             self.malignant_count += 1
+            self.malignant_confidences.append(prob)
         else:
             self.benign_count += 1
+            self.benign_confidences.append(prob)
         
-        # Update drift metrics if baseline exists
+        # Update drift
         if features is not None and self.feature_baseline is not None:
             self._update_drift_metrics(features)
     
-    def add_true_label(self, true_label):
-        """
-        Add ground truth label (for validation/feedback)
-        
-        Args: 
-            true_label: True class (0 or 1)
-        """
-        self.true_labels.append(true_label)
-    
     def _update_drift_metrics(self, features):
-        """
-        Calculate feature drift from baseline
-        
-        Args: 
-            features: Feature vector
-        """
+        """Calculate feature drift from baseline"""
         if self.feature_baseline is None:
             return
         
@@ -164,10 +253,10 @@ class ModelMetricsTracker:
         baseline_means = self.feature_baseline['means']
         baseline_stds = self.feature_baseline['stds']
         
-        # Track drift for first 10 features (to avoid metric explosion)
-        n_features_to_track = min(len(features), 10)
+        # Track first 10 features
+        n_features = min(len(features), 10)
         
-        for i in range(n_features_to_track):
+        for i in range(n_features):
             if i >= len(baseline_means):
                 continue
             
@@ -175,91 +264,49 @@ class ModelMetricsTracker:
             baseline_std = baseline_stds[i]
             current_value = features_array[0, i]
             
-            # Calculate drift as standardized difference (z-score)
             if baseline_std > 0:
                 drift = abs(current_value - baseline_mean) / baseline_std
                 feature_mean_drift.labels(feature_index=str(i)).set(float(drift))
     
     def calculate_metrics(self):
-        """
-        Calculate all ML performance metrics from rolling window
-        """
-        if len(self.predictions) < 10:
-            # Not enough data yet
+        """Calculate production metrics from rolling window"""
+        if len(self. predictions) < 10:
             return
         
         preds = np.array(list(self.predictions))
         probs = np.array(list(self.probabilities))
         
-        # ===== METRICS WITH GROUND TRUTH =====
-        if len(self.true_labels) >= 10:
-            y_true = np.array(list(self.true_labels))
-            y_pred = preds[-len(y_true):]
-            y_prob = probs[-len(y_true):]
-            
-            # F1 Score
-            try:
-                f1 = f1_score(y_true, y_pred, zero_division=0)
-                model_f1_score.set(float(f1))
-            except Exception as e:
-                print(f"⚠️ Error calculating F1: {e}")
-            
-            # ROC-AUC & PR-AUC
-            if len(np.unique(y_true)) > 1:
-                try: 
-                    roc_auc = roc_auc_score(y_true, y_prob)
-                    model_roc_auc.set(float(roc_auc))
-                    
-                    # Precision-Recall AUC
-                    precision, recall, _ = precision_recall_curve(y_true, y_prob)
-                    pr_auc = auc(recall, precision)
-                    model_pr_auc.set(float(pr_auc))
-                except Exception as e:
-                    print(f"⚠️ Error calculating AUC metrics: {e}")
-            
-            # Precision & Recall
-            tp = np.sum((y_pred == 1) & (y_true == 1))
-            fp = np.sum((y_pred == 1) & (y_true == 0))
-            fn = np.sum((y_pred == 0) & (y_true == 1))
-            tn = np.sum((y_pred == 0) & (y_true == 0))
-            
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-            
-            model_precision.set(float(precision))
-            model_recall.set(float(recall))
-            
-            # False rates
-            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
-            fnr = fn / (fn + tp) if (fn + tp) > 0 else 0
-            
-            false_positive_rate. set(float(fpr))
-            false_negative_rate.set(float(fnr))
+        # Prediction distribution
+        malignant_rate = float(np.mean(preds))
+        benign_rate = 1.0 - malignant_rate
         
-        # ===== PREDICTION DRIFT =====
-        # Track distribution of predictions over time
-        current_malignant_rate = float(np.mean(preds))
-        prediction_drift_score.set(current_malignant_rate)
+        prediction_drift_score.set(malignant_rate)
+        production_malignant_rate.set(malignant_rate * 100)  # Percentage
+        production_benign_rate.set(benign_rate * 100)
+        
+        # Confidence metrics
+        avg_confidence = float(np.mean(probs))
+        confidence_drift_score.set(avg_confidence)
+        
+        # Confidence by diagnosis
+        if len(self.benign_confidences) > 0:
+            avg_conf_benign = float(np. mean(list(self.benign_confidences)))
+            avg_confidence_benign.set(avg_conf_benign)
+        
+        if len(self. malignant_confidences) > 0:
+            avg_conf_malignant = float(np.mean(list(self.malignant_confidences)))
+            avg_confidence_malignant. set(avg_conf_malignant)
     
     def get_stats(self):
-        """
-        Get current statistics
-        
-        Returns:
-            dict: Current statistics
-        """
+        """Get current production statistics"""
+        total = self.malignant_count + self.benign_count
         return {
-            'total_predictions': self.malignant_count + self.benign_count,
+            'total_predictions':  total,
             'malignant_count': self.malignant_count,
             'benign_count': self.benign_count,
-            'ratio':  self.malignant_count / self.benign_count if self.benign_count > 0 else 0,
+            'malignant_rate': (self.malignant_count / total * 100) if total > 0 else 0,
+            'benign_rate': (self. benign_count / total * 100) if total > 0 else 0,
             'window_size': len(self.predictions),
             'has_baseline': self.feature_baseline is not None,
-            'has_ground_truth': len(self.true_labels) > 0
+            'avg_confidence':  float(np.mean(list(self.probabilities))) if len(self.probabilities) > 0 else 0
         }
-    
-    def reset_counts(self):
-        """Reset cumulative counts (predictions deque is not affected)"""
-        self.malignant_count = 0
-        self.benign_count = 0
-        print("🔄 Cumulative counts reset")
