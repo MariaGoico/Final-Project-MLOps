@@ -161,59 +161,77 @@ class ModelMetricsTracker:
         Load validation metrics from model evaluation
         
         Args:
-            metrics_dict: Dictionary with keys:
-                - f1_score
-                - accuracy
-                - precision
-                - recall
-                - specificity
-                - roc_auc
-                - pr_auc
-                - confusion_matrix:  {'tp', 'tn', 'fp', 'fn'}
-                - model_info:  {'version', 'algorithm', 'training_date', ... }
+            metrics_dict: Dictionary with validation metrics
         """
         try:
+            # Helper function to safely set gauge
+            def safe_set_gauge(gauge, value, name):
+                try:
+                    if value is not None:
+                        float_value = float(value)
+                        if not np.isnan(float_value) and not np.isinf(float_value):
+                            gauge.set(float_value)
+                            return True
+                except (ValueError, TypeError) as e:
+                    print(f"⚠️ Could not set {name}:  {e}")
+                return False
+            
             # Performance metrics
             if 'f1_score' in metrics_dict:
-                model_f1_score_validation.set(float(metrics_dict['f1_score']))
+                safe_set_gauge(model_f1_score_validation, metrics_dict['f1_score'], 'F1 Score')
             
             if 'accuracy' in metrics_dict:
-                model_accuracy_validation.set(float(metrics_dict['accuracy']))
+                safe_set_gauge(model_accuracy_validation, metrics_dict['accuracy'], 'Accuracy')
             
             if 'precision' in metrics_dict:
-                model_precision_validation.set(float(metrics_dict['precision']))
+                safe_set_gauge(model_precision_validation, metrics_dict['precision'], 'Precision')
             
             if 'recall' in metrics_dict:
-                model_recall_validation.set(float(metrics_dict['recall']))
+                safe_set_gauge(model_recall_validation, metrics_dict['recall'], 'Recall')
             
-            if 'specificity' in metrics_dict:
-                model_specificity_validation.set(float(metrics_dict['specificity']))
+            if 'specificity' in metrics_dict: 
+                safe_set_gauge(model_specificity_validation, metrics_dict['specificity'], 'Specificity')
             
             if 'roc_auc' in metrics_dict:
-                model_roc_auc_validation.set(float(metrics_dict['roc_auc']))
+                safe_set_gauge(model_roc_auc_validation, metrics_dict['roc_auc'], 'ROC-AUC')
             
             if 'pr_auc' in metrics_dict:
-                model_pr_auc_validation. set(float(metrics_dict['pr_auc']))
+                safe_set_gauge(model_pr_auc_validation, metrics_dict['pr_auc'], 'PR-AUC')
             
             # Confusion matrix
             if 'confusion_matrix' in metrics_dict:
                 cm = metrics_dict['confusion_matrix']
-                model_true_positives.set(int(cm. get('tp', 0)))
-                model_true_negatives. set(int(cm.get('tn', 0)))
+                model_true_positives.set(int(cm.get('tp', 0)))
+                model_true_negatives.set(int(cm.get('tn', 0)))
                 model_false_positives.set(int(cm.get('fp', 0)))
                 model_false_negatives.set(int(cm.get('fn', 0)))
             
-            # Model info
-            if 'model_info' in metrics_dict: 
-                model_info.info(metrics_dict['model_info'])
+            # Model info - MUST convert all values to strings
+            if 'model_info' in metrics_dict:
+                try:
+                    info_dict = {}
+                    for k, v in metrics_dict['model_info'].items():
+                        # Convert everything to string
+                        if v is None:
+                            info_dict[k] = 'unknown'
+                        else:
+                            info_dict[k] = str(v)
+                    
+                    model_info.info(info_dict)
+                    print(f"✅ Model info set:  {list(info_dict.keys())}")
+                
+                except Exception as e:
+                    print(f"⚠️ Could not set model_info:  {e}")
             
             print("✅ Validation metrics loaded successfully")
-            print(f"   F1: {metrics_dict. get('f1_score', 'N/A')}")
+            print(f"   F1: {metrics_dict.get('f1_score', 'N/A')}")
             print(f"   Accuracy: {metrics_dict.get('accuracy', 'N/A')}")
             print(f"   ROC-AUC: {metrics_dict.get('roc_auc', 'N/A')}")
             
         except Exception as e:
-            print(f"⚠️  Error loading validation metrics: {e}")
+            print(f"⚠️ Error loading validation metrics: {e}")
+            import traceback
+            print(traceback.format_exc())
     
     # ========================================
     # PRODUCTION METRICS (update continuously)
@@ -270,7 +288,7 @@ class ModelMetricsTracker:
     
     def calculate_metrics(self):
         """Calculate production metrics from rolling window"""
-        if len(self. predictions) < 10:
+        if len(self.predictions) < 10:
             return
         
         preds = np.array(list(self.predictions))
@@ -290,12 +308,12 @@ class ModelMetricsTracker:
         
         # Confidence by diagnosis
         if len(self.benign_confidences) > 0:
-            avg_conf_benign = float(np. mean(list(self.benign_confidences)))
+            avg_conf_benign = float(np.mean(list(self.benign_confidences)))
             avg_confidence_benign.set(avg_conf_benign)
         
-        if len(self. malignant_confidences) > 0:
+        if len(self.malignant_confidences) > 0:
             avg_conf_malignant = float(np.mean(list(self.malignant_confidences)))
-            avg_confidence_malignant. set(avg_conf_malignant)
+            avg_confidence_malignant.set(avg_conf_malignant)
     
     def get_stats(self):
         """Get current production statistics"""
@@ -305,7 +323,7 @@ class ModelMetricsTracker:
             'malignant_count': self.malignant_count,
             'benign_count': self.benign_count,
             'malignant_rate': (self.malignant_count / total * 100) if total > 0 else 0,
-            'benign_rate': (self. benign_count / total * 100) if total > 0 else 0,
+            'benign_rate': (self.benign_count / total * 100) if total > 0 else 0,
             'window_size': len(self.predictions),
             'has_baseline': self.feature_baseline is not None,
             'avg_confidence':  float(np.mean(list(self.probabilities))) if len(self.probabilities) > 0 else 0
