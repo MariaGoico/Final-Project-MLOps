@@ -616,7 +616,7 @@ class ModelMetricsTracker:
             return  # Skip production metrics, but drift simulation already executed above
         
         # Existing metrics calculation
-        preds = np. array(list(self.predictions))
+        preds = np.array(list(self.predictions))
         probs = np.array(list(self.probabilities))
         
         # Prediction distribution
@@ -632,11 +632,11 @@ class ModelMetricsTracker:
         confidence_drift_score.set(avg_confidence)
         
         if len(self.benign_confidences) > 0:
-            avg_conf_benign = float(np.mean(list(self. benign_confidences)))
+            avg_conf_benign = float(np.mean(list(self.benign_confidences)))
             avg_confidence_benign.set(avg_conf_benign)
         
         if len(self.malignant_confidences) > 0:
-            avg_conf_malignant = float(np.mean(list(self. malignant_confidences)))
+            avg_conf_malignant = float(np.mean(list(self.malignant_confidences)))
             avg_confidence_malignant.set(avg_conf_malignant)
     
     def get_stats(self):
