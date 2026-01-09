@@ -591,11 +591,32 @@ class ModelMetricsTracker:
     
     def calculate_metrics(self):
         """Calculate all production metrics including drift detection"""
+        
+        # ========================================
+        # STEP 1: DRIFT DETECTION (simulation or real)
+        # ========================================
+        # Execute FIRST, regardless of predictions count
+        
+        if self.enable_simulation:
+            # Simulation uses time-based random numbers, doesn't need predictions
+            self.simulate_drift()
+        else:
+            # Real detection requires predictions
+            if len(self.predictions) >= 10:
+                self.detect_data_drift()
+                self.detect_concept_drift()
+                self.detect_fairness_issues()
+        
+        # ========================================
+        # STEP 2: PRODUCTION METRICS (requires predictions)
+        # ========================================
+        # Only calculate if we have enough predictions
+        
         if len(self.predictions) < 10:
-            return
+            return  # Skip production metrics, but drift simulation already executed above
         
         # Existing metrics calculation
-        preds = np.array(list(self.predictions))
+        preds = np. array(list(self.predictions))
         probs = np.array(list(self.probabilities))
         
         # Prediction distribution
@@ -611,20 +632,12 @@ class ModelMetricsTracker:
         confidence_drift_score.set(avg_confidence)
         
         if len(self.benign_confidences) > 0:
-            avg_conf_benign = float(np.mean(list(self.benign_confidences)))
+            avg_conf_benign = float(np.mean(list(self. benign_confidences)))
             avg_confidence_benign.set(avg_conf_benign)
         
         if len(self.malignant_confidences) > 0:
-            avg_conf_malignant = float(np.mean(list(self.malignant_confidences)))
+            avg_conf_malignant = float(np.mean(list(self. malignant_confidences)))
             avg_confidence_malignant.set(avg_conf_malignant)
-        
-        # NEW: Drift detection
-        if self.enable_simulation:
-            self.simulate_drift()
-        else:
-            self.detect_data_drift()
-            self.detect_concept_drift()
-            self.detect_fairness_issues()
     
     def get_stats(self):
         """Get current production statistics"""
