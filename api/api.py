@@ -22,13 +22,93 @@ from fastapi.responses import Response
 import json
 import logging
 
-logger = logging.getLogger(__name__)  # ← AÑADIR ESTO
+# Configurar logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# ========================================
+# CREATE APP
+# ========================================
 app = FastAPI(
     title="Breast Cancer Prediction API",
     description="API for breast cancer prediction using XGBoost",
     version="1.0.0"
 )
+
+# ============================================
+# RETRAINING STATE (Global Variables)
+# ============================================
+retraining_lock = threading.Lock()
+retraining_in_progress = False
+retraining_status = {
+    "status": "idle",
+    "last_triggered": None,
+    "last_completed": None,
+    "trigger_reason": None,
+    "deployed":  None,
+    "error": None
+}
+
+# ============================================
+# RETRAINING FUNCTION
+# ============================================
+def run_retraining(trigger_reason: str):
+    """
+    Execute model retraining pipeline
+    """
+    global retraining_in_progress, retraining_status
+    
+    with retraining_lock:
+        if retraining_in_progress:
+            print("⚠️  Retraining already in progress, skipping")
+            return
+        retraining_in_progress = True
+    
+    retraining_status['status'] = 'in_progress'
+    retraining_status['error'] = None
+    
+    try:
+        print(f"\n{'='*60}")
+        print(f"🔄 STARTING RETRAINING PIPELINE")
+        print(f"   Trigger:  {trigger_reason}")
+        print(f"   Timestamp: {datetime.now()}")
+        print(f"{'='*60}\n")
+        
+        # Simulate retraining (replace with actual logic later)
+        print("📥 Step 1: Fetching new training data...")
+        time.sleep(2)
+        
+        print("🏋️  Step 2: Training new model...")
+        time.sleep(3)
+        
+        print("📊 Step 3: Evaluating new model...")
+        time.sleep(2)
+        
+        print("⚖️  Step 4: Comparing with current model...")
+        time.sleep(1)
+        
+        print("✅ Retraining completed (simulation)")
+        
+        retraining_status['status'] = 'completed'
+        retraining_status['deployed'] = True
+        retraining_status['last_completed'] = datetime.now().isoformat()
+        
+        print(f"\n{'='*60}")
+        print(f"✅ RETRAINING SUCCESSFUL")
+        print(f"   Status: {retraining_status['status']}")
+        print(f"{'='*60}\n")
+        
+    except Exception as e: 
+        print(f"\n{'='*60}")
+        print(f"❌ RETRAINING FAILED")
+        print(f"   Error: {str(e)}")
+        print(f"{'='*60}\n")
+        
+        retraining_status['status'] = 'failed'
+        retraining_status['error'] = str(e)
+    
+    finally:
+        retraining_in_progress = False
 
 # ========================================
 # PROMETHEUS METRICS
@@ -148,8 +228,8 @@ print(f"🔍 Drift simulation: {'ENABLED' if ENABLE_DRIFT_SIMULATION else 'DISAB
 # ========================================
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor.model.num_features()
-    print(f"✅ Model loaded. Expects {EXPECTED_FEATURES} features")
+    EXPECTED_FEATURES = predictor. model.num_features()
+    print(f"✅ Model loaded.  Expects {EXPECTED_FEATURES} features")
     model_loaded.set(1)
     expected_features_gauge.set(EXPECTED_FEATURES)
     api_start_time.set(time.time())
@@ -169,12 +249,11 @@ try:
             metrics_tracker.load_validation_metrics(validation_metrics)
             print("✅ Validation metrics loaded from artifacts/validation_metrics.json")
         else:
-            print("⚠️  validation_metrics.json not found. Using placeholder metrics.")
-            # Set placeholder metrics
+            print("⚠️  validation_metrics.json not found.  Using placeholder metrics.")
             metrics_tracker.load_validation_metrics({
                 'f1_score': 0.0,
                 'accuracy': 0.0,
-                'precision': 0.0,
+                'precision':  0.0,
                 'recall': 0.0,
                 'specificity': 0.0,
                 'roc_auc': 0.0,
@@ -184,11 +263,11 @@ try:
                     'algorithm': 'XGBoost',
                     'version': 'unknown',
                     'training_date': 'unknown',
-                    'features':  str(EXPECTED_FEATURES)
+                    'features': str(EXPECTED_FEATURES)
                 }
             })
     
-    except Exception as e: 
+    except Exception as e:
         print(f"⚠️  Error loading validation metrics: {e}")
         print("   Using placeholder metrics.")
     
@@ -256,11 +335,6 @@ def calculate_health_score():
     if not predictor:
         score -= 50
     
-    # Add more health checks here
-    # - Error rate
-    # - Latency
-    # - Memory usage
-    
     api_health_score.set(score)
     return score
 
@@ -271,7 +345,7 @@ def clean_dataframe(df):
     # Remove unnamed columns
     unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
     if unnamed_cols:
-        print(f"🧹 Removing columns:  {unnamed_cols}")
+        print(f"🧹 Removing columns: {unnamed_cols}")
         df = df.drop(columns=unnamed_cols)
     
     # Remove all-empty columns
@@ -324,14 +398,18 @@ async def home():
         "health_score": calculate_health_score(),
         "monitoring": {
             "validation_metrics_loaded": metrics_tracker.get_stats().get('has_baseline', False),
-            "drift_detection_enabled": metrics_tracker.feature_baseline is not None
+            "drift_detection_enabled": metrics_tracker.feature_baseline is not None,
+            "drift_simulation":  ENABLE_DRIFT_SIMULATION
         },
         "endpoints": {
             "POST /predict": "Upload CSV for prediction",
             "GET /health": "API health status",
             "GET /info": "Model information",
             "GET /metrics": "Prometheus metrics",
-            "GET /stats": "Current statistics"
+            "GET /stats": "Current statistics",
+            "POST /webhook/retrain": "Webhook for automatic retraining",
+            "GET /retrain/status": "Retraining status",
+            "POST /retrain/manual": "Manual retraining trigger"
         }
     }
 
@@ -343,7 +421,8 @@ async def health():
         "status": "healthy" if predictor and health_score > 50 else "unhealthy",
         "model_loaded": predictor is not None,
         "expected_features": EXPECTED_FEATURES,
-        "health_score":  health_score
+        "health_score":  health_score,
+        "retraining_in_progress": retraining_in_progress
     }
 
 @app.get("/info")
@@ -362,7 +441,8 @@ async def info():
         },
         "monitoring": {
             "validation_metrics_available": True,
-            "drift_detection_enabled": metrics_tracker.feature_baseline is not None
+            "drift_detection_enabled": metrics_tracker.feature_baseline is not None,
+            "drift_simulation": ENABLE_DRIFT_SIMULATION
         }
     }
 
@@ -389,9 +469,8 @@ async def metrics():
         print(f"❌ Error generating metrics: {e}")
         print(traceback.format_exc())
         
-        # Return error in plain text (not JSON, for Prometheus compatibility)
         return Response(
-            content=f"# Error generating metrics:  {str(e)}\n",
+            content=f"# Error generating metrics: {str(e)}\n",
             media_type="text/plain",
             status_code=500
         )
@@ -418,7 +497,7 @@ async def predict(file: UploadFile = File(... )):
         csv_file_size_bytes.observe(file_size)
         
         df = pd.read_csv(StringIO(contents.decode('utf-8')))
-        print(f"\n📁 File:  {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
+        print(f"\n📁 File: {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
         
         df = clean_dataframe(df)
         
@@ -452,7 +531,7 @@ async def predict(file: UploadFile = File(... )):
                 metrics_tracker.add_prediction(pred, prob, row.values)
                 
                 predictions.append({
-                    "row":  int(i),
+                    "row": int(i),
                     "prediction": int(pred),
                     "diagnosis": "Malignant (M)" if pred == 1 else "Benign (B)",
                     "probability": round(float(prob), 4),
@@ -481,7 +560,7 @@ async def predict(file: UploadFile = File(... )):
         request_duration = time.time() - request_start_time
         
         return {
-            "success": True,
+            "success":  True,
             "file":  file.filename,
             "predictions": predictions,
             "summary": {
@@ -517,44 +596,42 @@ async def predict(file: UploadFile = File(... )):
         prediction_errors_total.labels(error_type='unknown').inc()
         print(f"❌ Unexpected error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
+
+# ========================================
+# RETRAINING ENDPOINTS
+# ========================================
+
 @app.post("/webhook/retrain")
 async def webhook_retrain(
     request: Request,
     authorization: Optional[str] = Header(None)
 ):
     """
-    Webhook triggered by Grafana Cloud Alerting
+    Webhook triggered by Grafana Cloud Alerting for automatic retraining
     """
     global retraining_in_progress, retraining_status
     
-    # Decode Basic Auth (admin:your-webhook-secret)
+    # Basic Auth
     import base64
     expected_auth = "Basic " + base64.b64encode(b"admin:your-webhook-secret").decode()
     
     if authorization != expected_auth:
-        logger.warning(f"Unauthorized webhook attempt.  Received: {authorization}")
+        print(f"⚠️  Unauthorized webhook attempt.  Received: {authorization}")
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
         payload = await request.json()
         
-        # Grafana Cloud envía formato diferente a Alertmanager
-        # Puede venir como {"alerts": [...]} o {"status": "firing", ...}
-        
-        # Extraer información
+        # Extract alerts
         alerts = payload.get('alerts', [])
-        if not alerts and 'status' in payload: 
-            # Single alert format
+        if not alerts and 'status' in payload:
             alerts = [payload]
         
-        if not alerts:
+        if not alerts: 
             return {"status": "no_alerts"}
         
-        # Procesar primera alerta
+        # Process first alert
         first_alert = alerts[0]
-        
-        # Grafana Cloud structure
         alert_name = (
             first_alert.get('labels', {}).get('alertname') or
             first_alert.get('commonLabels', {}).get('alertname') or
@@ -562,12 +639,12 @@ async def webhook_retrain(
         )
         alert_status = first_alert.get('status', 'unknown')
         
-        # Solo triggear si está firing
+        # Only trigger on firing alerts
         if alert_status != 'firing':
-            logger.info(f"Alert {alert_name} status is {alert_status}, ignoring")
+            print(f"ℹ️  Alert {alert_name} status is {alert_status}, ignoring")
             return {"status":  "ignored", "reason": f"Status:  {alert_status}"}
         
-        logger.info(f"🚨 RETRAINING TRIGGERED by {alert_name}")
+        print(f"🚨 RETRAINING TRIGGERED by {alert_name}")
         
         # Check if already retraining
         if retraining_in_progress:
@@ -581,7 +658,7 @@ async def webhook_retrain(
         retraining_status['last_triggered'] = datetime.now().isoformat()
         retraining_status['trigger_reason'] = alert_name
         
-        # Trigger retraining in background
+        # Trigger retraining in background thread
         thread = threading.Thread(target=run_retraining, args=(alert_name,))
         thread.daemon = True
         thread.start()
@@ -593,5 +670,43 @@ async def webhook_retrain(
         }
     
     except Exception as e: 
-        logger.error(f"Error processing webhook: {e}")
+        print(f"❌ Error processing webhook: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/retrain/status")
+async def retrain_status():
+    """Get current retraining status"""
+    return {
+        "in_progress": retraining_in_progress,
+        **retraining_status
+    }
+
+@app.post("/retrain/manual")
+async def manual_retrain():
+    """Manually trigger retraining (for testing)"""
+    global retraining_in_progress
+    
+    if retraining_in_progress: 
+        raise HTTPException(status_code=409, detail="Retraining already in progress")
+    
+    retraining_status['status'] = 'manual_trigger'
+    retraining_status['last_triggered'] = datetime.now().isoformat()
+    retraining_status['trigger_reason'] = 'Manual trigger'
+    
+    thread = threading.Thread(target=run_retraining, args=("ManualTrigger",))
+    thread.daemon = True
+    thread.start()
+    
+    return {
+        "status": "retraining_started",
+        "timestamp": retraining_status['last_triggered']
+    }
+
+# ========================================
+# STARTUP
+# ========================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
