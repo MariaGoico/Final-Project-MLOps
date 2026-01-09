@@ -310,7 +310,7 @@ class XGBoostBreastCancerClassifier:
         print("="*60)
         print(f"✅ Feature baseline saved: {len(feature_means)} features")
         print(f"   Mean range: [{feature_means.min():.4f}, {feature_means.max():.4f}]")
-        print(f"   Std range: [{feature_stds. min():.4f}, {feature_stds.max():.4f}]")
+        print(f"   Std range: [{feature_stds.min():.4f}, {feature_stds.max():.4f}]")
         print("="*60 + "\n")
         
         # ===== OPTIONAL: Save human-readable JSON for inspection =====
@@ -384,7 +384,7 @@ class XGBoostBreastCancerClassifier:
             mlflow.log_metric("best_cv_roc_auc", study.best_value)
             
             # Train final model with best parameters
-            best_params = study.best_params. copy()
+            best_params = study.best_params.copy()
             best_params.update({
                 'objective': 'binary:logistic',
                 'eval_metric': 'auc',
