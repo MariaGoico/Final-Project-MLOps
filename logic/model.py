@@ -287,22 +287,56 @@ class XGBoostBreastCancerClassifier:
         feature_means = X_train.mean(axis=0)
         feature_stds = X_train.std(axis=0)
         
+        # Get feature names from processor if available
+        try:
+            if hasattr(self.processor, 'feature_names_out_'):
+                feature_names = self.processor.feature_names_out_
+            elif hasattr(self.processor, 'get_feature_names_out'):
+                feature_names = self.processor.get_feature_names_out()
+            else:
+                feature_names = [f"feature_{i}" for i in range(len(feature_means))]
+        except:
+            feature_names = [f"feature_{i}" for i in range(len(feature_means))]
+        
         # Save as NPZ
         os.makedirs("artifacts", exist_ok=True)
         np.savez(
             'artifacts/feature_baseline.npz',
             means=feature_means,
-            stds=feature_stds
+            stds=feature_stds,
+            feature_names=feature_names  # ← AÑADIDO
         )
         
         print("="*60)
-        print(f"✅ Feature baseline saved:  {len(feature_means)} features")
+        print(f"✅ Feature baseline saved: {len(feature_means)} features")
         print(f"   Mean range: [{feature_means.min():.4f}, {feature_means.max():.4f}]")
-        print(f"   Std range: [{feature_stds.min():.4f}, {feature_stds.max():.4f}]")
+        print(f"   Std range: [{feature_stds. min():.4f}, {feature_stds.max():.4f}]")
         print("="*60 + "\n")
+        
+        # ===== OPTIONAL: Save human-readable JSON for inspection =====
+        baseline_dict = {
+            'statistics': {
+                name: {
+                    'mean': float(mean),
+                    'std':  float(std)
+                }
+                for name, mean, std in zip(feature_names, feature_means, feature_stds)
+            },
+            'metadata': {
+                'n_features': len(feature_means),
+                'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'training_samples': int(X_train.shape[0])
+            }
+        }
+        
+        with open('artifacts/feature_baseline.json', 'w') as f:
+            json.dump(baseline_dict, f, indent=2)
+        
+        print("📄 Human-readable baseline saved to artifacts/feature_baseline.json\n")
         
         # Log to MLflow
         mlflow.log_artifact('artifacts/feature_baseline.npz')
+        mlflow.log_artifact('artifacts/feature_baseline.json')
 
     def train_and_optimize(self, n_trials=100):
         """

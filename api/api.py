@@ -52,15 +52,15 @@ retraining_status = {
 # ============================================
 # RETRAINING FUNCTION
 # ============================================
-def run_retraining(trigger_reason: str):
+def run_retraining(trigger_reason:  str):
     """
     Execute model retraining pipeline
     """
-    global retraining_in_progress, retraining_status
+    global retraining_in_progress, retraining_status, predictor
     
     with retraining_lock:
-        if retraining_in_progress:
-            print("⚠️  Retraining already in progress, skipping")
+        if retraining_in_progress: 
+            logger.warning("⚠️ Retraining already in progress, skipping")
             return
         retraining_in_progress = True
     
@@ -68,41 +68,55 @@ def run_retraining(trigger_reason: str):
     retraining_status['error'] = None
     
     try:
-        print(f"\n{'='*60}")
-        print(f"🔄 STARTING RETRAINING PIPELINE")
-        print(f"   Trigger:  {trigger_reason}")
-        print(f"   Timestamp: {datetime.now()}")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🔄 STARTING RETRAINING PIPELINE")
+        logger.info(f"   Trigger:  {trigger_reason}")
+        logger.info(f"   Timestamp: {datetime.now()}")
+        logger.info(f"{'='*60}\n")
         
-        # Simulate retraining (replace with actual logic later)
-        print("📥 Step 1: Fetching new training data...")
-        time.sleep(2)
+        # Import and run retraining pipeline
+        from logic.retraining_pipeline import RetrainingPipeline
         
-        print("🏋️  Step 2: Training new model...")
-        time.sleep(3)
+        pipeline = RetrainingPipeline(artifacts_dir="artifacts")
+        results = pipeline.run(trigger_reason)
         
-        print("📊 Step 3: Evaluating new model...")
-        time.sleep(2)
-        
-        print("⚖️  Step 4: Comparing with current model...")
-        time.sleep(1)
-        
-        print("✅ Retraining completed (simulation)")
-        
-        retraining_status['status'] = 'completed'
-        retraining_status['deployed'] = True
-        retraining_status['last_completed'] = datetime.now().isoformat()
-        
-        print(f"\n{'='*60}")
-        print(f"✅ RETRAINING SUCCESSFUL")
-        print(f"   Status: {retraining_status['status']}")
-        print(f"{'='*60}\n")
+        if results['success']:
+            
+            # Check if new model was deployed
+            if results.get('deployed', False):
+                logger.info("✅ New model deployed via CI/CD")
+                logger.info("   Waiting for Render to redeploy with new artifacts...")
+                
+                # The container will be replaced by Render's CI/CD
+                # This instance will be shut down
+                retraining_status['status'] = 'completed'
+                retraining_status['deployed'] = True
+                retraining_status['deployment_method'] = 'cicd_triggered'
+                retraining_status['last_completed'] = datetime.now().isoformat()
+                
+            else:
+                # Model not better, no deployment
+                logger.info("⚠️ New model not better, keeping current model")
+                
+                retraining_status['status'] = 'completed'
+                retraining_status['deployed'] = False
+                retraining_status['last_completed'] = datetime.now().isoformat()
+            
+            retraining_status['results'] = results
+            
+            logger.info(f"\n{'='*60}")
+            logger.info(f"✅ RETRAINING SUCCESSFUL")
+            logger.info(f"   Deployed: {results.get('deployed', False)}")
+            logger.info(f"{'='*60}\n")
+        else:
+            raise Exception(f"Retraining failed: {results.get('error', 'Unknown error')}")
         
     except Exception as e: 
-        print(f"\n{'='*60}")
-        print(f"❌ RETRAINING FAILED")
-        print(f"   Error: {str(e)}")
-        print(f"{'='*60}\n")
+        logger.error(f"\n{'='*60}")
+        logger.error(f"❌ RETRAINING FAILED")
+        logger.error(f"   Error: {str(e)}")
+        logger.error(f"{'='*60}\n")
+        logger.error(traceback.format_exc())
         
         retraining_status['status'] = 'failed'
         retraining_status['error'] = str(e)
@@ -228,7 +242,7 @@ print(f"🔍 Drift simulation: {'ENABLED' if ENABLE_DRIFT_SIMULATION else 'DISAB
 # ========================================
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor. model.num_features()
+    EXPECTED_FEATURES = predictor.model.num_features()
     print(f"✅ Model loaded.  Expects {EXPECTED_FEATURES} features")
     model_loaded.set(1)
     expected_features_gauge.set(EXPECTED_FEATURES)
@@ -611,68 +625,81 @@ async def webhook_retrain(
     """
     global retraining_in_progress, retraining_status
     
-    # Basic Auth
+    # ===== AUTHENTICATION =====
     import base64
-    expected_auth = "Basic " + base64.b64encode(b"admin:your-webhook-secret").decode()
+    
+    # Get secret from environment (más seguro)
+    webhook_secret = os.environ.get("WEBHOOK_SECRET", "your-webhook-secret")
+    expected_auth = "Basic " + base64.b64encode(f"admin:{webhook_secret}".encode()).decode()
     
     if authorization != expected_auth:
-        print(f"⚠️  Unauthorized webhook attempt.  Received: {authorization}")
+        logger.warning(f"⚠️ Unauthorized webhook attempt from {request.client.host}")
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
         payload = await request.json()
+        logger.info(f"📥 Webhook payload received: {json.dumps(payload, indent=2)}")
         
-        # Extract alerts
+        # ===== EXTRACT ALERT INFO =====
+        # Grafana sends alerts in 'alerts' array
         alerts = payload.get('alerts', [])
-        if not alerts and 'status' in payload:
-            alerts = [payload]
         
-        if not alerts: 
-            return {"status": "no_alerts"}
+        if not alerts:
+            logger.info("No alerts in payload, ignoring")
+            return {"status":  "no_alerts", "message": "No alerts to process"}
         
-        # Process first alert
-        first_alert = alerts[0]
-        alert_name = (
-            first_alert.get('labels', {}).get('alertname') or
-            first_alert.get('commonLabels', {}).get('alertname') or
-            'Unknown'
-        )
-        alert_status = first_alert.get('status', 'unknown')
+        # Process first firing alert
+        firing_alerts = [a for a in alerts if a.get('status') == 'firing']
         
-        # Only trigger on firing alerts
-        if alert_status != 'firing':
-            print(f"ℹ️  Alert {alert_name} status is {alert_status}, ignoring")
-            return {"status":  "ignored", "reason": f"Status:  {alert_status}"}
+        if not firing_alerts: 
+            logger.info(f"No firing alerts (found {len(alerts)} alerts with other status)")
+            return {"status": "ignored", "reason": "No firing alerts"}
         
-        print(f"🚨 RETRAINING TRIGGERED by {alert_name}")
+        alert = firing_alerts[0]
+        alert_name = alert.get('labels', {}).get('alertname', 'Unknown Alert')
+        alert_value = alert.get('values', {}).get('A', 'N/A')
         
-        # Check if already retraining
-        if retraining_in_progress:
+        logger.info(f"🚨 ALERT FIRING: {alert_name} (value={alert_value})")
+        
+        # ===== CHECK IF ALREADY RETRAINING =====
+        if retraining_in_progress: 
+            logger.warning("⚠️ Retraining already in progress, skipping")
             return {
                 "status": "already_in_progress",
-                "message": "Retraining already in progress"
+                "message": "Retraining already running",
+                "current_status": retraining_status
             }
         
-        # Update status
+        # ===== TRIGGER RETRAINING =====
         retraining_status['status'] = 'triggered'
         retraining_status['last_triggered'] = datetime.now().isoformat()
         retraining_status['trigger_reason'] = alert_name
+        retraining_status['alert_value'] = str(alert_value)
         
-        # Trigger retraining in background thread
-        thread = threading.Thread(target=run_retraining, args=(alert_name,))
-        thread.daemon = True
+        # Start retraining in background thread
+        thread = threading.Thread(
+            target=run_retraining,
+            args=(alert_name,),
+            daemon=True
+        )
         thread.start()
         
+        logger.info(f"✅ Retraining triggered by {alert_name}")
+        
         return {
-            "status": "retraining_triggered",
+            "status":  "retraining_triggered",
             "alert":  alert_name,
-            "timestamp": retraining_status['last_triggered']
+            "timestamp": retraining_status['last_triggered'],
+            "message": f"Automatic retraining started due to {alert_name}"
         }
     
-    except Exception as e: 
-        print(f"❌ Error processing webhook: {e}")
-        import traceback
-        traceback.print_exc()
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Invalid JSON payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    
+    except Exception as e:
+        logger.error(f"❌ Error processing webhook: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/retrain/status")

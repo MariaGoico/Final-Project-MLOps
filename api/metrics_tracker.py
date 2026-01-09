@@ -4,6 +4,8 @@ Metrics Tracker for ML Model Monitoring
 - Production metrics (from live predictions)
 """
 
+import time
+import random
 import numpy as np
 from collections import deque
 from prometheus_client import Gauge, Histogram, Info
@@ -194,7 +196,8 @@ class ModelMetricsTracker:
     
     def __init__(self, window_size=1000, enable_simulation=False):
         self.window_size = window_size
-        
+        self.enable_simulation = enable_simulation  # ← AÑADIR ESTO
+
         # Production data
         self.predictions = deque(maxlen=window_size)
         self.probabilities = deque(maxlen=window_size)
@@ -374,7 +377,7 @@ class ModelMetricsTracker:
                 drifted_count += 1
                 
             # Update per-feature drift metric
-            feature_mean_drift. labels(feature_index=str(i)).set(float(z))
+            feature_mean_drift.labels(feature_index=str(i)).set(float(z))
         
         # Aggregate drift score (mean z-score, normalized)
         avg_z_score = np.mean(z_scores)
@@ -389,7 +392,7 @@ class ModelMetricsTracker:
         features_drifted_count.set(drifted_count)
         
         if drift_detected:
-            self. drift_detected_count += 1
+            self.drift_detected_count += 1
             print(f"⚠️  DATA DRIFT DETECTED: {drifted_count} features drifted (z-score > {self.DATA_DRIFT_THRESHOLD})")
         
         return drift_detected, drift_score
@@ -444,8 +447,8 @@ class ModelMetricsTracker:
         prediction_flip_rate.set(flip_rate)
         
         if concept_detected:
-            self. concept_drift_detected_count += 1
-            print(f"⚠️  CONCEPT DRIFT DETECTED:  Flip rate = {flip_rate:.2%} (threshold: {self.CONCEPT_DRIFT_THRESHOLD:. 2%})")
+            self.concept_drift_detected_count += 1
+            print(f"⚠️  CONCEPT DRIFT DETECTED:  Flip rate = {flip_rate:.2%} (threshold: {self.CONCEPT_DRIFT_THRESHOLD:.2%})")
         
         return concept_detected, flip_rate
     
@@ -471,14 +474,14 @@ class ModelMetricsTracker:
         avg_malignant_conf = np.mean(list(self.malignant_confidences))
         confidence_gap = abs(avg_benign_conf - avg_malignant_conf)
         
-        confidence_issue = confidence_gap > self. FAIRNESS_CONFIDENCE_THRESHOLD
+        confidence_issue = confidence_gap > self.FAIRNESS_CONFIDENCE_THRESHOLD
         
         # 2. Prediction Imbalance
         total = self.malignant_count + self.benign_count
         if total > 0:
             current_malignant_rate = self.malignant_count / total
             imbalance = abs(current_malignant_rate - self.baseline_malignant_rate)
-            imbalance_issue = imbalance > self. FAIRNESS_IMBALANCE_THRESHOLD
+            imbalance_issue = imbalance > self.FAIRNESS_IMBALANCE_THRESHOLD
         else:
             imbalance = 0.0
             imbalance_issue = False
@@ -514,48 +517,73 @@ class ModelMetricsTracker:
     def simulate_drift(self):
         """
         Simulate drift for testing/demonstration
-        Called periodically by /metrics endpoint
+        Called periodically by /metrics endpoint when Prometheus scrapes
         """
         if not self.enable_simulation:
             return
         
         current_time = time.time()
+        cycle_time = int(current_time) % 900  # 15 min cycle
         
-        # Simulate data drift every 5 minutes (300 seconds)
-        if int(current_time) % 300 < 10:  # Active for 10 seconds
-            # Inject high z-scores
-            for i in range(5):  # Drift in 5 features
-                simulated_z_score = random.uniform(3.5, 5.0)
+        print(f"🎭 Simulating drift...  (cycle_time={cycle_time}s)")
+        
+        # ========================================
+        # DATA DRIFT SIMULATION (every 5 minutes)
+        # ========================================
+        if 120 <= cycle_time < 240:  # Active for 2 minutes every 15 min
+            # Simulate feature drift
+            drifted_features = random.randint(3, 7)
+            for i in range(drifted_features):
+                simulated_z_score = random.uniform(3.5, 6.0)
                 feature_mean_drift.labels(feature_index=str(i)).set(simulated_z_score)
             
+            drift_score = random.uniform(0.7, 0.95)
             data_drift_detected.set(1)
-            data_drift_score.set(0.8)
-            features_drifted_count.set(5)
+            data_drift_score.set(drift_score)
+            features_drifted_count.set(drifted_features)
+            
+            print(f"   📊 DATA DRIFT:  {drifted_features} features, score={drift_score:.2f}")
         else:
-            # Reset to normal
+            # Normal state
+            for i in range(3):
+                feature_mean_drift.labels(feature_index=str(i)).set(random.uniform(0.5, 2.5))
+            
             data_drift_detected.set(0)
-            data_drift_score.set(0.1)
+            data_drift_score.set(random.uniform(0.05, 0.15))
             features_drifted_count.set(0)
         
-        # Simulate concept drift every 7 minutes
-        if int(current_time) % 420 < 10:
+        # ========================================
+        # CONCEPT DRIFT SIMULATION (every 7 minutes)
+        # ========================================
+        if 300 <= cycle_time < 420:  # Active for 2 minutes
+            flip_rate = random.uniform(0.20, 0.35)
             concept_drift_detected.set(1)
-            concept_drift_score.set(0.25)
-            prediction_flip_rate.set(0.25)
+            concept_drift_score.set(flip_rate)
+            prediction_flip_rate.set(flip_rate)
+            
+            print(f"   🔄 CONCEPT DRIFT: flip_rate={flip_rate:.2%}")
         else:
-            concept_drift_detected. set(0)
-            concept_drift_score.set(0.05)
-            prediction_flip_rate.set(0.05)
+            flip_rate = random.uniform(0.02, 0.08)
+            concept_drift_detected.set(0)
+            concept_drift_score.set(flip_rate)
+            prediction_flip_rate.set(flip_rate)
         
-        # Simulate fairness issue every 10 minutes
-        if int(current_time) % 600 < 10:
+        # ========================================
+        # FAIRNESS ISSUE SIMULATION (every 10 minutes)
+        # ========================================
+        if 600 <= cycle_time < 720:  # Active for 2 minutes
+            conf_gap = random.uniform(0.12, 0.20)
+            imbalance = random.uniform(0.22, 0.35)
+            
             fairness_issue_detected.set(1)
-            confidence_disparity_score.set(0.15)
-            prediction_imbalance_score.set(0.25)
+            confidence_disparity_score.set(conf_gap)
+            prediction_imbalance_score.set(imbalance)
+            
+            print(f"   ⚖️  FAIRNESS ISSUE:  conf_gap={conf_gap:.2%}, imbalance={imbalance:.2%}")
         else:
             fairness_issue_detected.set(0)
-            confidence_disparity_score.set(0.03)
-            prediction_imbalance_score.set(0.05)
+            confidence_disparity_score.set(random.uniform(0.01, 0.05))
+            prediction_imbalance_score.set(random.uniform(0.02, 0.08))
 
     # ========================================
     # CALCULATE METRICS
@@ -575,7 +603,7 @@ class ModelMetricsTracker:
         benign_rate = 1.0 - malignant_rate
         
         prediction_drift_score.set(malignant_rate)
-        production_malignant_rate. set(malignant_rate * 100)
+        production_malignant_rate.set(malignant_rate * 100)
         production_benign_rate.set(benign_rate * 100)
         
         # Confidence metrics
