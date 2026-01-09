@@ -76,6 +76,64 @@ model_info = Info(
 )
 
 # ========================================
+# ENHANCED DRIFT DETECTION METRICS
+# ========================================
+
+# Data Drift (Feature Distribution)
+data_drift_detected = Gauge(
+    'data_drift_detected',
+    'Binary flag:  1 if data drift detected, 0 otherwise'
+)
+
+data_drift_score = Gauge(
+    'data_drift_score',
+    'Kolmogorov-Smirnov statistic aggregated across features (0-1, higher = more drift)'
+)
+
+features_drifted_count = Gauge(
+    'features_drifted_count',
+    'Number of features with significant drift (z-score > 3)'
+)
+
+# Concept Drift (X -> Y relationship)
+concept_drift_detected = Gauge(
+    'concept_drift_detected',
+    'Binary flag: 1 if concept drift detected, 0 otherwise'
+)
+
+concept_drift_score = Gauge(
+    'concept_drift_score',
+    'Concept drift score based on prediction flip rate (0-1)'
+)
+
+prediction_flip_rate = Gauge(
+    'prediction_flip_rate',
+    'Rate of prediction changes for similar inputs (concept drift indicator)'
+)
+
+# Fairness Issues
+fairness_issue_detected = Gauge(
+    'fairness_issue_detected',
+    'Binary flag: 1 if fairness issue detected, 0 otherwise'
+)
+
+confidence_disparity_score = Gauge(
+    'confidence_disparity_score',
+    'Absolute difference in confidence between Benign and Malignant predictions'
+)
+
+prediction_imbalance_score = Gauge(
+    'prediction_imbalance_score',
+    'Deviation from expected class balance (0-1, higher = more imbalance)'
+)
+
+# Drift Simulation Toggle
+drift_simulation_enabled = Gauge(
+    'drift_simulation_enabled',
+    'Flag indicating if drift simulation is active (1=yes, 0=no)'
+)
+
+# ========================================
 # PRODUCTION METRICS (DYNAMIC)
 # ========================================
 
@@ -134,12 +192,13 @@ class ModelMetricsTracker:
     Production metrics: Updated with each prediction
     """
     
-    def __init__(self, window_size=1000):
+    def __init__(self, window_size=1000, enable_simulation=False):
         self.window_size = window_size
         
         # Production data
         self.predictions = deque(maxlen=window_size)
         self.probabilities = deque(maxlen=window_size)
+        self.features_history = deque(maxlen=window_size)  # NEW:  store features
         self.feature_baseline = None
         
         # Counters
@@ -149,8 +208,25 @@ class ModelMetricsTracker:
         # Confidence tracking
         self.benign_confidences = deque(maxlen=window_size)
         self.malignant_confidences = deque(maxlen=window_size)
+
+        # Drift detection state
+        self.baseline_malignant_rate = 0.372  # From training data
+        self.drift_detected_count = 0
+        self.concept_drift_detected_count = 0
+        self.fairness_issue_count = 0
+
+        # Thresholds
+        self.DATA_DRIFT_THRESHOLD = 3.0  # z-score threshold
+        self.CONCEPT_DRIFT_THRESHOLD = 0.15  # 15% flip rate
+        self.FAIRNESS_CONFIDENCE_THRESHOLD = 0.10  # 10% confidence gap
+        self.FAIRNESS_IMBALANCE_THRESHOLD = 0.20  # 20% deviation from baseline
         
-        print(f"📊 ModelMetricsTracker initialized (window_size={window_size})")
+        drift_simulation_enabled.set(1 if enable_simulation else 0)
+        
+        print(f"📊 ModelMetricsTracker initialized")
+        print(f"   Window size: {window_size}")
+        print(f"   Simulation:  {'ENABLED' if enable_simulation else 'DISABLED'}")
+    
     
     # ========================================
     # VALIDATION METRICS (load once)
@@ -241,7 +317,9 @@ class ModelMetricsTracker:
         """Set baseline feature statistics from training data"""
         self.feature_baseline = {
             'means': np.array(means),
-            'stds': np.array(stds)
+            'stds': np.array(stds),
+            'n_features': len(means)
+
         }
         print(f"✅ Feature baseline set: {len(means)} features")
     
@@ -250,6 +328,10 @@ class ModelMetricsTracker:
         self.predictions.append(pred)
         self.probabilities.append(prob)
         
+        # Store features for concept drift detection
+        if features is not None:
+            self.features_history.append(features)
+
         # Track by diagnosis
         if pred == 1: 
             self.malignant_count += 1
@@ -257,40 +339,234 @@ class ModelMetricsTracker:
         else:
             self.benign_count += 1
             self.benign_confidences.append(prob)
-        
-        # Update drift
-        if features is not None and self.feature_baseline is not None:
-            self._update_drift_metrics(features)
+
+    # ========================================
+    # DATA DRIFT DETECTION
+    # ========================================
     
-    def _update_drift_metrics(self, features):
-        """Calculate feature drift from baseline"""
-        if self.feature_baseline is None:
-            return
+    def detect_data_drift(self):
+        """
+        Detect data drift using z-score analysis
         
-        features_array = np.array(features).reshape(1, -1)
+        Returns:
+            bool: True if drift detected
+            float: Drift score (0-1)
+        """
+        if self.feature_baseline is None or len(self.features_history) < 30:
+            return False, 0.0
+        
+        # Get recent features
+        recent_features = np.array(list(self.features_history)[-100:])
+        
         baseline_means = self.feature_baseline['means']
         baseline_stds = self.feature_baseline['stds']
         
-        # Track first 10 features
-        n_features = min(len(features), 10)
+        # Calculate z-scores for each feature
+        z_scores = []
+        drifted_count = 0
         
-        for i in range(n_features):
-            if i >= len(baseline_means):
-                continue
+        for i in range(min(recent_features.shape[1], len(baseline_means))):
+            recent_mean = np.mean(recent_features[:, i])
+            z = abs(recent_mean - baseline_means[i]) / (baseline_stds[i] + 1e-10)
+            z_scores.append(z)
             
-            baseline_mean = baseline_means[i]
-            baseline_std = baseline_stds[i]
-            current_value = features_array[0, i]
+            if z > self.DATA_DRIFT_THRESHOLD:
+                drifted_count += 1
+                
+            # Update per-feature drift metric
+            feature_mean_drift. labels(feature_index=str(i)).set(float(z))
+        
+        # Aggregate drift score (mean z-score, normalized)
+        avg_z_score = np.mean(z_scores)
+        drift_score = min(avg_z_score / 5.0, 1.0)  # Normalize to [0,1]
+        
+        # Drift detected if >= 3 features have z-score > threshold
+        drift_detected = drifted_count >= 3
+        
+        # Update metrics
+        data_drift_detected.set(1 if drift_detected else 0)
+        data_drift_score.set(drift_score)
+        features_drifted_count.set(drifted_count)
+        
+        if drift_detected:
+            self. drift_detected_count += 1
+            print(f"⚠️  DATA DRIFT DETECTED: {drifted_count} features drifted (z-score > {self.DATA_DRIFT_THRESHOLD})")
+        
+        return drift_detected, drift_score
+    
+
+    # ========================================
+    # CONCEPT DRIFT DETECTION
+    # ========================================
+    
+    def detect_concept_drift(self):
+        """
+        Detect concept drift using prediction flip rate
+        
+        Concept drift = relationship between X and Y changes
+        We detect this by checking if similar inputs now get different predictions
+        
+        Returns:
+            bool: True if concept drift detected
+            float:  Flip rate (0-1)
+        """
+        if len(self.features_history) < 100 or len(self.predictions) < 100:
+            return False, 0.0
+        
+        recent_features = np.array(list(self.features_history)[-100:])
+        recent_predictions = np.array(list(self.predictions)[-100:])
+        
+        # Find pairs of similar inputs (Euclidean distance < threshold)
+        flip_count = 0
+        pair_count = 0
+        similarity_threshold = 2.0  # Adjust based on scaled features
+        
+        for i in range(len(recent_features) - 10):
+            for j in range(i + 1, min(i + 10, len(recent_features))):
+                distance = np.linalg.norm(recent_features[i] - recent_features[j])
+                
+                if distance < similarity_threshold: 
+                    pair_count += 1
+                    # Check if predictions differ
+                    if recent_predictions[i] != recent_predictions[j]: 
+                        flip_count += 1
+        
+        if pair_count == 0:
+            return False, 0.0
+        
+        flip_rate = flip_count / pair_count
+        
+        concept_detected = flip_rate > self.CONCEPT_DRIFT_THRESHOLD
+        
+        # Update metrics
+        concept_drift_detected.set(1 if concept_detected else 0)
+        concept_drift_score.set(flip_rate)
+        prediction_flip_rate.set(flip_rate)
+        
+        if concept_detected:
+            self. concept_drift_detected_count += 1
+            print(f"⚠️  CONCEPT DRIFT DETECTED:  Flip rate = {flip_rate:.2%} (threshold: {self.CONCEPT_DRIFT_THRESHOLD:. 2%})")
+        
+        return concept_detected, flip_rate
+    
+    # ========================================
+    # FAIRNESS ISSUE DETECTION
+    # ========================================
+    
+    def detect_fairness_issues(self):
+        """
+        Detect fairness issues: 
+        1. Confidence disparity between classes
+        2. Prediction imbalance (deviation from baseline distribution)
+        
+        Returns:
+            bool: True if fairness issue detected
+            dict: Fairness metrics
+        """
+        if len(self.benign_confidences) < 30 or len(self.malignant_confidences) < 30:
+            return False, {}
+        
+        # 1. Confidence Disparity
+        avg_benign_conf = np.mean(list(self.benign_confidences))
+        avg_malignant_conf = np.mean(list(self.malignant_confidences))
+        confidence_gap = abs(avg_benign_conf - avg_malignant_conf)
+        
+        confidence_issue = confidence_gap > self. FAIRNESS_CONFIDENCE_THRESHOLD
+        
+        # 2. Prediction Imbalance
+        total = self.malignant_count + self.benign_count
+        if total > 0:
+            current_malignant_rate = self.malignant_count / total
+            imbalance = abs(current_malignant_rate - self.baseline_malignant_rate)
+            imbalance_issue = imbalance > self. FAIRNESS_IMBALANCE_THRESHOLD
+        else:
+            imbalance = 0.0
+            imbalance_issue = False
+        
+        # Overall fairness issue
+        fairness_issue = confidence_issue or imbalance_issue
+        
+        # Update metrics
+        fairness_issue_detected.set(1 if fairness_issue else 0)
+        confidence_disparity_score.set(confidence_gap)
+        prediction_imbalance_score.set(imbalance)
+        
+        if fairness_issue:
+            self.fairness_issue_count += 1
+            issues = []
+            if confidence_issue:
+                issues.append(f"Confidence gap: {confidence_gap:.2%}")
+            if imbalance_issue:
+                issues.append(f"Imbalance: {imbalance:.2%}")
+            print(f"⚠️  FAIRNESS ISSUE DETECTED: {', '.join(issues)}")
+        
+        return fairness_issue, {
+            'confidence_gap': confidence_gap,
+            'imbalance': imbalance,
+            'confidence_issue': confidence_issue,
+            'imbalance_issue': imbalance_issue
+        }
+    
+    # ========================================
+    # DRIFT SIMULATION (for testing)
+    # ========================================
+    
+    def simulate_drift(self):
+        """
+        Simulate drift for testing/demonstration
+        Called periodically by /metrics endpoint
+        """
+        if not self.enable_simulation:
+            return
+        
+        current_time = time.time()
+        
+        # Simulate data drift every 5 minutes (300 seconds)
+        if int(current_time) % 300 < 10:  # Active for 10 seconds
+            # Inject high z-scores
+            for i in range(5):  # Drift in 5 features
+                simulated_z_score = random.uniform(3.5, 5.0)
+                feature_mean_drift.labels(feature_index=str(i)).set(simulated_z_score)
             
-            if baseline_std > 0:
-                drift = abs(current_value - baseline_mean) / baseline_std
-                feature_mean_drift.labels(feature_index=str(i)).set(float(drift))
+            data_drift_detected.set(1)
+            data_drift_score.set(0.8)
+            features_drifted_count.set(5)
+        else:
+            # Reset to normal
+            data_drift_detected.set(0)
+            data_drift_score.set(0.1)
+            features_drifted_count.set(0)
+        
+        # Simulate concept drift every 7 minutes
+        if int(current_time) % 420 < 10:
+            concept_drift_detected.set(1)
+            concept_drift_score.set(0.25)
+            prediction_flip_rate.set(0.25)
+        else:
+            concept_drift_detected. set(0)
+            concept_drift_score.set(0.05)
+            prediction_flip_rate.set(0.05)
+        
+        # Simulate fairness issue every 10 minutes
+        if int(current_time) % 600 < 10:
+            fairness_issue_detected.set(1)
+            confidence_disparity_score.set(0.15)
+            prediction_imbalance_score.set(0.25)
+        else:
+            fairness_issue_detected.set(0)
+            confidence_disparity_score.set(0.03)
+            prediction_imbalance_score.set(0.05)
+
+    # ========================================
+    # CALCULATE METRICS
+    # ========================================
     
     def calculate_metrics(self):
-        """Calculate production metrics from rolling window"""
+        """Calculate all production metrics including drift detection"""
         if len(self.predictions) < 10:
             return
         
+        # Existing metrics calculation
         preds = np.array(list(self.predictions))
         probs = np.array(list(self.probabilities))
         
@@ -299,14 +575,13 @@ class ModelMetricsTracker:
         benign_rate = 1.0 - malignant_rate
         
         prediction_drift_score.set(malignant_rate)
-        production_malignant_rate.set(malignant_rate * 100)  # Percentage
+        production_malignant_rate. set(malignant_rate * 100)
         production_benign_rate.set(benign_rate * 100)
         
         # Confidence metrics
         avg_confidence = float(np.mean(probs))
         confidence_drift_score.set(avg_confidence)
         
-        # Confidence by diagnosis
         if len(self.benign_confidences) > 0:
             avg_conf_benign = float(np.mean(list(self.benign_confidences)))
             avg_confidence_benign.set(avg_conf_benign)
@@ -314,6 +589,14 @@ class ModelMetricsTracker:
         if len(self.malignant_confidences) > 0:
             avg_conf_malignant = float(np.mean(list(self.malignant_confidences)))
             avg_confidence_malignant.set(avg_conf_malignant)
+        
+        # NEW: Drift detection
+        if self.enable_simulation:
+            self.simulate_drift()
+        else:
+            self.detect_data_drift()
+            self.detect_concept_drift()
+            self.detect_fairness_issues()
     
     def get_stats(self):
         """Get current production statistics"""

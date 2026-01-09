@@ -1,6 +1,8 @@
 import sys
 import os
 from pathlib import Path
+import threading
+from typing import Optional
 
 # Añadir directorio raíz al path para encontrar logic/
 root_dir = Path(__file__).resolve().parent.parent
@@ -8,7 +10,7 @@ sys.path.insert(0, str(root_dir))
 
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, Header, UploadFile, HTTPException, Request, logger
 from logic.breast_cancer_predictor import BreastCancerPredictor
 from api.metrics_tracker import ModelMetricsTracker, prediction_confidence_by_diagnosis
 from io import StringIO
@@ -129,7 +131,14 @@ missing_values_total = Counter(
 # ========================================
 # INITIALIZE METRICS TRACKER
 # ========================================
-metrics_tracker = ModelMetricsTracker(window_size=1000)
+ENABLE_DRIFT_SIMULATION = os.environ.get("ENABLE_DRIFT_SIMULATION", "false").lower() == "true"
+
+metrics_tracker = ModelMetricsTracker(
+    window_size=1000,
+    enable_simulation=ENABLE_DRIFT_SIMULATION
+)
+
+print(f"🔍 Drift simulation: {'ENABLED' if ENABLE_DRIFT_SIMULATION else 'DISABLED'}")
 
 # ========================================
 # MODEL LOADING
@@ -505,3 +514,81 @@ async def predict(file: UploadFile = File(... )):
         prediction_errors_total.labels(error_type='unknown').inc()
         print(f"❌ Unexpected error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
+@app.post("/webhook/retrain")
+async def webhook_retrain(
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Webhook triggered by Grafana Cloud Alerting
+    """
+    global retraining_in_progress, retraining_status
+    
+    # Decode Basic Auth (admin:your-webhook-secret)
+    import base64
+    expected_auth = "Basic " + base64.b64encode(b"admin:your-webhook-secret").decode()
+    
+    if authorization != expected_auth:
+        logger.warning(f"Unauthorized webhook attempt.  Received: {authorization}")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        payload = await request.json()
+        
+        # Grafana Cloud envía formato diferente a Alertmanager
+        # Puede venir como {"alerts": [...]} o {"status": "firing", ...}
+        
+        # Extraer información
+        alerts = payload.get('alerts', [])
+        if not alerts and 'status' in payload: 
+            # Single alert format
+            alerts = [payload]
+        
+        if not alerts:
+            return {"status": "no_alerts"}
+        
+        # Procesar primera alerta
+        first_alert = alerts[0]
+        
+        # Grafana Cloud structure
+        alert_name = (
+            first_alert.get('labels', {}).get('alertname') or
+            first_alert.get('commonLabels', {}).get('alertname') or
+            'Unknown'
+        )
+        alert_status = first_alert.get('status', 'unknown')
+        
+        # Solo triggear si está firing
+        if alert_status != 'firing':
+            logger. info(f"Alert {alert_name} status is {alert_status}, ignoring")
+            return {"status":  "ignored", "reason": f"Status:  {alert_status}"}
+        
+        logger.info(f"🚨 RETRAINING TRIGGERED by {alert_name}")
+        
+        # Check if already retraining
+        if retraining_in_progress:
+            return {
+                "status": "already_in_progress",
+                "message": "Retraining already in progress"
+            }
+        
+        # Update status
+        retraining_status['status'] = 'triggered'
+        retraining_status['last_triggered'] = datetime.now().isoformat()
+        retraining_status['trigger_reason'] = alert_name
+        
+        # Trigger retraining in background
+        thread = threading.Thread(target=run_retraining, args=(alert_name,))
+        thread.daemon = True
+        thread.start()
+        
+        return {
+            "status": "retraining_triggered",
+            "alert":  alert_name,
+            "timestamp": retraining_status['last_triggered']
+        }
+    
+    except Exception as e: 
+        logger.error(f"Error processing webhook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
