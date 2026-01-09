@@ -10,7 +10,7 @@ sys.path.insert(0, str(root_dir))
 
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, File, Header, UploadFile, HTTPException, Request, logger
+from fastapi import FastAPI, File, Header, UploadFile, HTTPException, Request
 from logic.breast_cancer_predictor import BreastCancerPredictor
 from api.metrics_tracker import ModelMetricsTracker, prediction_confidence_by_diagnosis
 from io import StringIO
@@ -20,6 +20,9 @@ from datetime import datetime
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 import json
+import logging
+
+logger = logging.getLogger(__name__)  # ← AÑADIR ESTO
 
 app = FastAPI(
     title="Breast Cancer Prediction API",
@@ -561,7 +564,7 @@ async def webhook_retrain(
         
         # Solo triggear si está firing
         if alert_status != 'firing':
-            logger. info(f"Alert {alert_name} status is {alert_status}, ignoring")
+            logger.info(f"Alert {alert_name} status is {alert_status}, ignoring")
             return {"status":  "ignored", "reason": f"Status:  {alert_status}"}
         
         logger.info(f"🚨 RETRAINING TRIGGERED by {alert_name}")
