@@ -596,10 +596,17 @@ class ModelMetricsTracker:
         # STEP 1: DRIFT DETECTION (simulation or real)
         # ========================================
         # Execute FIRST, regardless of predictions count
+
+        print(f"🔍 calculate_metrics() CALLED")
+        print(f"   enable_simulation = {self.enable_simulation}")
+        print(f"   Current time: {time.time()}")
         
         if self.enable_simulation:
             # Simulation uses time-based random numbers, doesn't need predictions
+            print(f"   ✅ About to call simulate_drift()")
+            # Simulation uses time-based random numbers, doesn't need predictions
             self.simulate_drift()
+            print(f"   ✅ simulate_drift() completed")
         else:
             # Real detection requires predictions
             if len(self.predictions) >= 10:

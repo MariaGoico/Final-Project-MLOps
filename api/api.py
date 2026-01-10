@@ -469,19 +469,32 @@ async def stats():
 async def metrics():
     """Prometheus metrics endpoint"""
     try:
+        logger.info("="*60)
+        logger.info("📊 /metrics CALLED")
+        logger.info(f"   ENABLE_DRIFT_SIMULATION = {ENABLE_DRIFT_SIMULATION}")
+        logger.info(f"   metrics_tracker.enable_simulation = {metrics_tracker.enable_simulation}")
+        logger.info("="*60)
         # Calculate health and metrics
         calculate_health_score()
+        logger.info("🔄 About to call calculate_metrics()")
         metrics_tracker.calculate_metrics()
+        logger.info("✅ calculate_metrics() returned")
+
+        content = generate_latest()
+        content_str = content.decode('utf-8')
+        for line in content_str.split('\n'):
+            if 'data_drift_detected' in line and not line.startswith('#'):
+                logger.info(f"   DRIFT METRIC: {line}")
         
         # Generate Prometheus format
         return Response(
-            content=generate_latest(),
+            content=content,
             media_type=CONTENT_TYPE_LATEST
         )
     
     except Exception as e:
-        print(f"❌ Error generating metrics: {e}")
-        print(traceback.format_exc())
+        logger.error(f"❌ Error generating metrics: {e}")
+        logger.error(traceback.format_exc())
         
         return Response(
             content=f"# Error generating metrics: {str(e)}\n",
@@ -511,7 +524,7 @@ async def predict(file: UploadFile = File(... )):
         csv_file_size_bytes.observe(file_size)
         
         df = pd.read_csv(StringIO(contents.decode('utf-8')))
-        print(f"\n📁 File: {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
+        logger.info(f"\n📁 File: {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
         
         df = clean_dataframe(df)
         
@@ -554,6 +567,7 @@ async def predict(file: UploadFile = File(... )):
                 })
                 
             except Exception as e:
+                logger.error(f"❌ Prediction error on row {i}: {e}")
                 rows_processed_total.labels(status='error').inc()
                 prediction_errors_total.labels(error_type='prediction_error').inc()
                 predictions.append({"row": int(i), "error": str(e)})
