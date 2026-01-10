@@ -29,7 +29,7 @@ class RetrainingPipeline:
         2. Train with original data
         3. ALWAYS deploy (no comparison)
         
-        Returns:
+        Returns: 
             dict:  Retraining results
         """
         results = {
@@ -56,7 +56,7 @@ class RetrainingPipeline:
             new_model_metrics = self.train_new_model()
             results['steps']['training'] = {
                 'status': 'success',
-                'metrics':  new_model_metrics
+                'metrics': new_model_metrics
             }
             
             # ===== STEP 3: DEPLOY (ALWAYS) =====
@@ -124,7 +124,14 @@ class RetrainingPipeline:
             raise Exception(f"Training failed: {result.stderr}")
         
         print("✅ Training completed successfully")
-        print(f"   Output: {result.stdout[-200:]}")  # Last 200 chars
+        
+        # Show last lines of output
+        if result.stdout:
+            output_lines = result.stdout.split('\n')
+            print("\n📤 Training output (last 10 lines):")
+            for line in output_lines[-10:]: 
+                if line.strip():
+                    print(f"   {line}")
         
         # Load metrics
         metrics_path = self.artifacts_dir / "validation_metrics.json"
@@ -141,87 +148,132 @@ class RetrainingPipeline:
     def deploy_new_model(self):
         """
         Deploy new model via CI/CD (commit + push to trigger GitHub Actions)
+        Uses environment variables instead of git config to avoid permission issues
         """
         print("📦 Deploying artifacts to GitHub...")
         
         try:
-            # Configure git
-            subprocess.run(
-                ['git', 'config', 'user.email', 'retraining-bot@render.com'], 
-                check=True,
-                capture_output=True
-            )
-            subprocess.run(
-                ['git', 'config', 'user.name', 'Retraining Bot'], 
-                check=True,
-                capture_output=True
-            )
+            # ========================================
+            # CONFIGURE GIT USING ENVIRONMENT VARIABLES
+            # ========================================
+            env = os.environ.copy()
+            env['GIT_AUTHOR_NAME'] = 'Retraining Bot'
+            env['GIT_AUTHOR_EMAIL'] = 'retraining-bot@render.com'
+            env['GIT_COMMITTER_NAME'] = 'Retraining Bot'
+            env['GIT_COMMITTER_EMAIL'] = 'retraining-bot@render.com'
             
-            # Add artifacts
-            subprocess.run(
+            print("   ✅ Git identity configured via environment variables")
+            
+            # ========================================
+            # ADD ARTIFACTS
+            # ========================================
+            print("   📦 Staging artifacts...")
+            result = subprocess.run(
                 ['git', 'add', 'artifacts/'], 
                 check=True,
-                capture_output=True
+                capture_output=True,
+                text=True,
+                env=env
             )
+            print("   ✅ Artifacts staged")
             
-            # Commit
-            commit_message = f"Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            # ========================================
+            # COMMIT
+            # ========================================
+            commit_message = f"🤖 Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            print(f"   💬 Committing: {commit_message}")
+            
             result = subprocess.run(
                 ['git', 'commit', '-m', commit_message], 
                 capture_output=True,
-                text=True
+                text=True,
+                env=env
             )
             
             if result.returncode != 0:
-                if "nothing to commit" in result.stdout:
-                    print("⚠️ No changes to commit (artifacts unchanged)")
+                if "nothing to commit" in result.stdout.lower():
+                    print("   ⚠️ No changes to commit (artifacts unchanged)")
                     return True  # Not an error
                 else:
-                    print(f"❌ Commit failed: {result.stderr}")
+                    print(f"   ❌ Commit failed: {result.stderr}")
+                    if result.stdout:
+                        print(f"   stdout: {result.stdout}")
                     return False
             
-            # Push (requires GITHUB_TOKEN)
+            print(f"   ✅ Committed successfully")
+            
+            # ========================================
+            # CONFIGURE REMOTE
+            # ========================================
             github_token = os.environ.get('GITHUB_TOKEN')
             if not github_token:
-                print("❌ GITHUB_TOKEN not found in environment")
-                print("   Deployment via Git push not available")
-                print("   Model trained but not pushed to GitHub")
+                print("   ❌ GITHUB_TOKEN not found in environment")
+                print("      Deployment via Git push not available")
+                print("      Model trained but not pushed to GitHub")
                 return False
             
-            # Get repo info
             repo_owner = os.environ.get('GITHUB_REPO_OWNER', 'MariaGoico')
             repo_name = os.environ.get('GITHUB_REPO_NAME', 'Final-Project-MLOps')
             
             remote_url = f"https://{github_token}@github.com/{repo_owner}/{repo_name}.git"
             
+            print(f"   🔗 Configuring remote: {repo_owner}/{repo_name}")
+            
+            # Try to set remote URL (may fail if remote doesn't exist)
             subprocess.run(
                 ['git', 'remote', 'set-url', 'origin', remote_url], 
-                check=True,
-                capture_output=True
+                capture_output=True,
+                env=env
             )
+            
+            # If set-url failed, try to add remote
+            subprocess.run(
+                ['git', 'remote', 'add', 'origin', remote_url],
+                capture_output=True,
+                env=env
+            )
+            
+            # ========================================
+            # PUSH
+            # ========================================
+            print("   🚀 Pushing to GitHub...")
             
             push_result = subprocess.run(
                 ['git', 'push', 'origin', 'main'], 
                 capture_output=True,
-                text=True
+                text=True,
+                env=env,
+                timeout=60  # 60 second timeout
             )
             
             if push_result.returncode != 0:
-                print(f"❌ Push failed:  {push_result.stderr}")
+                print(f"   ❌ Push failed: {push_result.stderr}")
+                if push_result.stdout:
+                    print(f"   stdout:  {push_result.stdout}")
                 return False
             
-            print("✅ Artifacts pushed to GitHub successfully")
-            print(f"   Commit:  {commit_message}")
-            print(f"   CI/CD pipeline will trigger automatically")
+            print("   ✅ Artifacts pushed to GitHub successfully")
+            print(f"   📝 Commit: {commit_message}")
+            print(f"   🔄 CI/CD pipeline will trigger automatically")
             
             return True
             
         except subprocess.CalledProcessError as e: 
-            print(f"❌ Git operation failed: {e}")
+            print(f"   ❌ Git operation failed: {e}")
+            if hasattr(e, 'stderr') and e.stderr:
+                print(f"      stderr: {e.stderr}")
+            if hasattr(e, 'stdout') and e.stdout:
+                print(f"      stdout: {e.stdout}")
             return False
         
-        except Exception as e:
-            print(f"❌ Deployment error: {e}")
+        except subprocess.TimeoutExpired:
+            print(f"   ❌ Git push timed out (>60s)")
+            return False
+        
+        except Exception as e: 
+            print(f"   ❌ Deployment error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def restore_backup(self):
