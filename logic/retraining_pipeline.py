@@ -147,131 +147,143 @@ class RetrainingPipeline:
     
     def deploy_new_model(self):
         """
-        Deploy new model via CI/CD (commit + push to trigger GitHub Actions)
-        Uses environment variables instead of git config to avoid permission issues
+        Deploy new model via GitHub API (without requiring . git directory)
         """
-        print("📦 Deploying artifacts to GitHub...")
+        print("📦 Deploying artifacts to GitHub via API...")
         
         try:
-            # ========================================
-            # CONFIGURE GIT USING ENVIRONMENT VARIABLES
-            # ========================================
-            env = os.environ.copy()
-            env['GIT_AUTHOR_NAME'] = 'Retraining Bot'
-            env['GIT_AUTHOR_EMAIL'] = 'retraining-bot@render.com'
-            env['GIT_COMMITTER_NAME'] = 'Retraining Bot'
-            env['GIT_COMMITTER_EMAIL'] = 'retraining-bot@render.com'
-            
-            print("   ✅ Git identity configured via environment variables")
+            import requests
+            import base64
             
             # ========================================
-            # ADD ARTIFACTS
-            # ========================================
-            print("   📦 Staging artifacts...")
-            result = subprocess.run(
-                ['git', 'add', 'artifacts/'], 
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env
-            )
-            print("   ✅ Artifacts staged")
-            
-            # ========================================
-            # COMMIT
-            # ========================================
-            commit_message = f"🤖 Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            print(f"   💬 Committing: {commit_message}")
-            
-            result = subprocess.run(
-                ['git', 'commit', '-m', commit_message], 
-                capture_output=True,
-                text=True,
-                env=env
-            )
-            
-            if result.returncode != 0:
-                if "nothing to commit" in result.stdout.lower():
-                    print("   ⚠️ No changes to commit (artifacts unchanged)")
-                    return True  # Not an error
-                else:
-                    print(f"   ❌ Commit failed: {result.stderr}")
-                    if result.stdout:
-                        print(f"   stdout: {result.stdout}")
-                    return False
-            
-            print(f"   ✅ Committed successfully")
-            
-            # ========================================
-            # CONFIGURE REMOTE
+            # GET GITHUB CREDENTIALS
             # ========================================
             github_token = os.environ.get('GITHUB_TOKEN')
             if not github_token:
                 print("   ❌ GITHUB_TOKEN not found in environment")
-                print("      Deployment via Git push not available")
-                print("      Model trained but not pushed to GitHub")
                 return False
             
             repo_owner = os.environ.get('GITHUB_REPO_OWNER', 'MariaGoico')
             repo_name = os.environ.get('GITHUB_REPO_NAME', 'Final-Project-MLOps')
+            branch = 'main'
             
-            remote_url = f"https://{github_token}@github.com/{repo_owner}/{repo_name}.git"
+            headers = {
+                'Authorization': f'token {github_token}',
+                'Accept': 'application/vnd.github.v3+json'
+            }
             
-            print(f"   🔗 Configuring remote: {repo_owner}/{repo_name}")
-            
-            # Try to set remote URL (may fail if remote doesn't exist)
-            subprocess.run(
-                ['git', 'remote', 'set-url', 'origin', remote_url], 
-                capture_output=True,
-                env=env
-            )
-            
-            # If set-url failed, try to add remote
-            subprocess.run(
-                ['git', 'remote', 'add', 'origin', remote_url],
-                capture_output=True,
-                env=env
-            )
+            print(f"   🔗 Target:  {repo_owner}/{repo_name} (branch: {branch})")
             
             # ========================================
-            # PUSH
+            # UPLOAD EACH ARTIFACT FILE
             # ========================================
-            print("   🚀 Pushing to GitHub...")
-            
-            push_result = subprocess.run(
-                ['git', 'push', 'origin', 'main'], 
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=60  # 60 second timeout
-            )
-            
-            if push_result.returncode != 0:
-                print(f"   ❌ Push failed: {push_result.stderr}")
-                if push_result.stdout:
-                    print(f"   stdout:  {push_result.stdout}")
+            if not self.artifacts_dir.exists():
+                print("   ❌ Artifacts directory not found")
                 return False
             
-            print("   ✅ Artifacts pushed to GitHub successfully")
-            print(f"   📝 Commit: {commit_message}")
-            print(f"   🔄 CI/CD pipeline will trigger automatically")
+            artifact_files = list(self.artifacts_dir.glob('*'))
+            if not artifact_files:
+                print("   ⚠️ No artifact files to upload")
+                return False
             
-            return True
+            print(f"   📦 Found {len(artifact_files)} files to upload")
             
-        except subprocess.CalledProcessError as e: 
-            print(f"   ❌ Git operation failed: {e}")
-            if hasattr(e, 'stderr') and e.stderr:
-                print(f"      stderr: {e.stderr}")
-            if hasattr(e, 'stdout') and e.stdout:
-                print(f"      stdout: {e.stdout}")
+            uploaded = []
+            failed = []
+            
+            for artifact_file in artifact_files: 
+                if not artifact_file.is_file():
+                    continue
+                    
+                print(f"   📤 Uploading {artifact_file.name}.. .", end=" ")
+                
+                try:
+                    # Read file content and encode to base64
+                    with open(artifact_file, 'rb') as f:
+                        content = base64.b64encode(f.read()).decode('utf-8')
+                    
+                    # Get current file SHA (if file exists)
+                    file_path = f'artifacts/{artifact_file.name}'
+                    get_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}'
+                    
+                    get_response = requests.get(
+                        get_url,
+                        headers=headers,
+                        params={'ref': branch}
+                    )
+                    
+                    file_sha = None
+                    if get_response.status_code == 200:
+                        file_sha = get_response.json().get('sha')
+                    
+                    # Prepare commit message
+                    commit_message = f"Auto-retrain: Update {artifact_file.name}"
+                    
+                    # Create/update file
+                    payload = {
+                        'message':  commit_message,
+                        'content': content,
+                        'branch': branch
+                    }
+                    
+                    if file_sha:
+                        payload['sha'] = file_sha  # Required for updates
+                    
+                    put_response = requests.put(
+                        get_url,
+                        headers=headers,
+                        json=payload
+                    )
+                    
+                    if put_response.status_code in [200, 201]:
+                        print("✅")
+                        uploaded.append(artifact_file.name)
+                    else:
+                        print(f"❌ ({put_response.status_code})")
+                        error_msg = put_response.json().get('message', 'Unknown error')
+                        print(f"      Error: {error_msg}")
+                        failed.append(artifact_file.name)
+                    
+                except Exception as e:
+                    print(f"❌ ({str(e)})")
+                    failed.append(artifact_file.name)
+            
+            # ========================================
+            # SUMMARY
+            # ========================================
+            print()
+            print(f"   📊 Upload Summary:")
+            print(f"      ✅ Uploaded: {len(uploaded)} files")
+            if uploaded:
+                for name in uploaded:
+                    print(f"         - {name}")
+            
+            if failed:
+                print(f"      ❌ Failed: {len(failed)} files")
+                for name in failed:
+                    print(f"         - {name}")
+            
+            if uploaded and not failed:
+                print()
+                print("   ✅ All artifacts pushed to GitHub successfully")
+                print("   🔄 CI/CD pipeline will trigger automatically")
+                return True
+            elif uploaded and failed:
+                print()
+                print("   ⚠️ Some artifacts uploaded, but some failed")
+                return False
+            else:
+                print()
+                print("   ❌ No artifacts uploaded successfully")
+                return False
+                
+        except ImportError:
+            print("   ❌ 'requests' library not available")
+            print("      Add 'requests' to pyproject.toml dependencies")
             return False
         
-        except subprocess.TimeoutExpired:
-            print(f"   ❌ Git push timed out (>60s)")
-            return False
-        
-        except Exception as e: 
-            print(f"   ❌ Deployment error: {e}")
+        except Exception as e:
+            print(f"   ❌ GitHub API error: {e}")
             import traceback
             traceback.print_exc()
             return False
