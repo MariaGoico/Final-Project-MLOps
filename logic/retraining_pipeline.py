@@ -147,7 +147,8 @@ class RetrainingPipeline:
     
     def deploy_new_model(self):
         """
-        Deploy new model via GitHub API (without requiring . git directory)
+        Deploy new model via GitHub API in a SINGLE commit
+        Uses Tree API + Commit API for atomic updates
         """
         print("📦 Deploying artifacts to GitHub via API...")
         
@@ -172,114 +173,183 @@ class RetrainingPipeline:
                 'Accept': 'application/vnd.github.v3+json'
             }
             
-            print(f"   🔗 Target:  {repo_owner}/{repo_name} (branch: {branch})")
+            base_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}'
+            
+            print(f"   🔗 Target: {repo_owner}/{repo_name} (branch: {branch})")
             
             # ========================================
-            # UPLOAD EACH ARTIFACT FILE
+            # COLLECT ARTIFACT FILES
             # ========================================
             if not self.artifacts_dir.exists():
                 print("   ❌ Artifacts directory not found")
                 return False
             
-            artifact_files = list(self.artifacts_dir.glob('*'))
+            artifact_files = [f for f in self.artifacts_dir.glob('*') if f.is_file()]
             if not artifact_files:
                 print("   ⚠️ No artifact files to upload")
                 return False
             
             print(f"   📦 Found {len(artifact_files)} files to upload")
             
-            uploaded = []
-            failed = []
+            # ========================================
+            # GET CURRENT COMMIT SHA
+            # ========================================
+            print("   🔍 Getting current commit SHA...")
+            ref_url = f'{base_url}/git/refs/heads/{branch}'
+            ref_response = requests.get(ref_url, headers=headers)
+            
+            if ref_response.status_code != 200:
+                print(f"   ❌ Failed to get branch ref: {ref_response.json()}")
+                return False
+            
+            current_commit_sha = ref_response.json()['object']['sha']
+            print(f"   ✅ Current commit:  {current_commit_sha[: 7]}")
+            
+            # ========================================
+            # GET BASE TREE SHA
+            # ========================================
+            commit_url = f'{base_url}/git/commits/{current_commit_sha}'
+            commit_response = requests.get(commit_url, headers=headers)
+            
+            if commit_response.status_code != 200:
+                print(f"   ❌ Failed to get commit: {commit_response.json()}")
+                return False
+            
+            base_tree_sha = commit_response.json()['tree']['sha']
+            
+            # ========================================
+            # CREATE BLOBS FOR EACH FILE
+            # ========================================
+            print("   📤 Creating blobs for artifacts...")
+            tree_items = []
             
             for artifact_file in artifact_files: 
-                if not artifact_file.is_file():
-                    continue
-                    
-                print(f"   📤 Uploading {artifact_file.name}.. .", end=" ")
+                print(f"      - {artifact_file.name}.. .", end=" ")
                 
                 try:
-                    # Read file content and encode to base64
+                    # Read and encode file
                     with open(artifact_file, 'rb') as f:
                         content = base64.b64encode(f.read()).decode('utf-8')
                     
-                    # Get current file SHA (if file exists)
-                    file_path = f'artifacts/{artifact_file.name}'
-                    get_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}'
-                    
-                    get_response = requests.get(
-                        get_url,
-                        headers=headers,
-                        params={'ref': branch}
-                    )
-                    
-                    file_sha = None
-                    if get_response.status_code == 200:
-                        file_sha = get_response.json().get('sha')
-                    
-                    # Prepare commit message
-                    commit_message = f"Auto-retrain: Update {artifact_file.name}"
-                    
-                    # Create/update file
-                    payload = {
-                        'message':  commit_message,
-                        'content': content,
-                        'branch': branch
+                    # Create blob
+                    blob_url = f'{base_url}/git/blobs'
+                    blob_payload = {
+                        'content':  content,
+                        'encoding':  'base64'
                     }
                     
-                    if file_sha:
-                        payload['sha'] = file_sha  # Required for updates
+                    blob_response = requests.post(blob_url, headers=headers, json=blob_payload)
                     
-                    put_response = requests.put(
-                        get_url,
-                        headers=headers,
-                        json=payload
-                    )
+                    if blob_response.status_code != 201:
+                        print(f"❌ ({blob_response.status_code})")
+                        continue
                     
-                    if put_response.status_code in [200, 201]:
-                        print("✅")
-                        uploaded.append(artifact_file.name)
-                    else:
-                        print(f"❌ ({put_response.status_code})")
-                        error_msg = put_response.json().get('message', 'Unknown error')
-                        print(f"      Error: {error_msg}")
-                        failed.append(artifact_file.name)
+                    blob_sha = blob_response.json()['sha']
+                    
+                    # Add to tree
+                    tree_items.append({
+                        'path':  f'artifacts/{artifact_file.name}',
+                        'mode': '100644',  # Regular file
+                        'type': 'blob',
+                        'sha': blob_sha
+                    })
+                    
+                    print("✅")
                     
                 except Exception as e:
                     print(f"❌ ({str(e)})")
-                    failed.append(artifact_file.name)
+            
+            if not tree_items:
+                print("   ❌ No blobs created successfully")
+                return False
+            
+            # ========================================
+            # CREATE NEW TREE
+            # ========================================
+            print(f"   🌳 Creating tree with {len(tree_items)} files...")
+            tree_url = f'{base_url}/git/trees'
+            tree_payload = {
+                'base_tree': base_tree_sha,
+                'tree': tree_items
+            }
+            
+            tree_response = requests.post(tree_url, headers=headers, json=tree_payload)
+            
+            if tree_response.status_code != 201:
+                print(f"   ❌ Failed to create tree: {tree_response.json()}")
+                return False
+            
+            new_tree_sha = tree_response.json()['sha']
+            print(f"   ✅ Tree created:  {new_tree_sha[:7]}")
+            
+            # ========================================
+            # CREATE COMMIT
+            # ========================================
+            commit_message = f"Auto-retrain: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            print(f"   💬 Creating commit:  {commit_message}")
+            
+            commit_url = f'{base_url}/git/commits'
+            commit_payload = {
+                'message': commit_message,
+                'tree': new_tree_sha,
+                'parents': [current_commit_sha],
+                'author': {
+                    'name': 'Retraining Bot',
+                    'email': 'retraining-bot@render.com',
+                    'date': datetime.now().isoformat()
+                },
+                'committer': {
+                    'name': 'Retraining Bot',
+                    'email': 'retraining-bot@render.com',
+                    'date': datetime.now().isoformat()
+                }
+            }
+            
+            commit_response = requests.post(commit_url, headers=headers, json=commit_payload)
+            
+            if commit_response.status_code != 201:
+                print(f"   ❌ Failed to create commit: {commit_response.json()}")
+                return False
+            
+            new_commit_sha = commit_response.json()['sha']
+            print(f"   ✅ Commit created: {new_commit_sha[:7]}")
+            
+            # ========================================
+            # UPDATE BRANCH REFERENCE
+            # ========================================
+            print(f"   🔄 Updating {branch} branch...")
+            update_ref_url = f'{base_url}/git/refs/heads/{branch}'
+            update_payload = {
+                'sha': new_commit_sha,
+                'force': False
+            }
+            
+            update_response = requests.patch(update_ref_url, headers=headers, json=update_payload)
+            
+            if update_response.status_code != 200:
+                print(f"   ❌ Failed to update branch: {update_response.json()}")
+                return False
+            
+            print(f"   ✅ Branch updated successfully")
             
             # ========================================
             # SUMMARY
             # ========================================
             print()
-            print(f"   📊 Upload Summary:")
-            print(f"      ✅ Uploaded: {len(uploaded)} files")
-            if uploaded:
-                for name in uploaded:
-                    print(f"         - {name}")
+            print(f"   📊 Deployment Summary:")
+            print(f"      ✅ Files deployed: {len(tree_items)}")
+            for item in tree_items:
+                print(f"         - {item['path']}")
+            print(f"      📝 Commit:  {commit_message}")
+            print(f"      🔗 SHA: {new_commit_sha[:7]}")
+            print()
+            print("   ✅ All artifacts pushed to GitHub in a SINGLE commit")
+            print("   🔄 CI/CD pipeline will trigger automatically")
             
-            if failed:
-                print(f"      ❌ Failed: {len(failed)} files")
-                for name in failed:
-                    print(f"         - {name}")
+            return True
             
-            if uploaded and not failed:
-                print()
-                print("   ✅ All artifacts pushed to GitHub successfully")
-                print("   🔄 CI/CD pipeline will trigger automatically")
-                return True
-            elif uploaded and failed:
-                print()
-                print("   ⚠️ Some artifacts uploaded, but some failed")
-                return False
-            else:
-                print()
-                print("   ❌ No artifacts uploaded successfully")
-                return False
-                
         except ImportError:
             print("   ❌ 'requests' library not available")
-            print("      Add 'requests' to pyproject.toml dependencies")
             return False
         
         except Exception as e:
