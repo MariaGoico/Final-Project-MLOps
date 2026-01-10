@@ -13,7 +13,6 @@ from prometheus_client import Gauge, Histogram, Info
 # ========================================
 # MODEL VALIDATION METRICS (STATIC)
 # ========================================
-# These are loaded once from the model's validation results
 
 model_f1_score_validation = Gauge(
     'model_f1_score_validation',
@@ -50,7 +49,6 @@ model_pr_auc_validation = Gauge(
     'Precision-Recall AUC from validation/test set'
 )
 
-# Confusion matrix components
 model_true_positives = Gauge(
     'model_true_positives_validation',
     'True Positives from validation set'
@@ -71,7 +69,6 @@ model_false_negatives = Gauge(
     'False Negatives from validation set'
 )
 
-# Model info
 model_info = Info(
     'model_info',
     'Model metadata and version information'
@@ -81,7 +78,6 @@ model_info = Info(
 # ENHANCED DRIFT DETECTION METRICS
 # ========================================
 
-# Data Drift (Feature Distribution)
 data_drift_detected = Gauge(
     'data_drift_detected',
     'Binary flag:  1 if data drift detected, 0 otherwise'
@@ -97,7 +93,6 @@ features_drifted_count = Gauge(
     'Number of features with significant drift (z-score > 3)'
 )
 
-# Concept Drift (X -> Y relationship)
 concept_drift_detected = Gauge(
     'concept_drift_detected',
     'Binary flag: 1 if concept drift detected, 0 otherwise'
@@ -113,7 +108,6 @@ prediction_flip_rate = Gauge(
     'Rate of prediction changes for similar inputs (concept drift indicator)'
 )
 
-# Fairness Issues
 fairness_issue_detected = Gauge(
     'fairness_issue_detected',
     'Binary flag: 1 if fairness issue detected, 0 otherwise'
@@ -129,7 +123,6 @@ prediction_imbalance_score = Gauge(
     'Deviation from expected class balance (0-1, higher = more imbalance)'
 )
 
-# Drift Simulation Toggle
 drift_simulation_enabled = Gauge(
     'drift_simulation_enabled',
     'Flag indicating if drift simulation is active (1=yes, 0=no)'
@@ -139,7 +132,6 @@ drift_simulation_enabled = Gauge(
 # PRODUCTION METRICS (DYNAMIC)
 # ========================================
 
-# Drift detection
 feature_mean_drift = Gauge(
     'feature_mean_drift',
     'Mean value drift from training baseline',
@@ -156,7 +148,6 @@ confidence_drift_score = Gauge(
     'Average prediction confidence in production'
 )
 
-# Confidence by diagnosis
 prediction_confidence_by_diagnosis = Histogram(
     'prediction_confidence_by_diagnosis',
     'Confidence distribution by diagnosis in production',
@@ -174,7 +165,6 @@ avg_confidence_malignant = Gauge(
     'Average confidence for Malignant predictions in production'
 )
 
-# Production distribution
 production_malignant_rate = Gauge(
     'production_malignant_rate',
     'Percentage of malignant predictions in production'
@@ -189,19 +179,16 @@ production_benign_rate = Gauge(
 class ModelMetricsTracker:
     """
     Tracks both validation and production metrics
-    
-    Validation metrics:  Loaded once from model evaluation
-    Production metrics: Updated with each prediction
     """
     
     def __init__(self, window_size=1000, enable_simulation=False):
         self.window_size = window_size
-        self.enable_simulation = enable_simulation  # ← AÑADIR ESTO
+        self.enable_simulation = enable_simulation
 
         # Production data
         self.predictions = deque(maxlen=window_size)
         self.probabilities = deque(maxlen=window_size)
-        self.features_history = deque(maxlen=window_size)  # NEW:  store features
+        self.features_history = deque(maxlen=window_size)
         self.feature_baseline = None
         
         # Counters
@@ -213,16 +200,16 @@ class ModelMetricsTracker:
         self.malignant_confidences = deque(maxlen=window_size)
 
         # Drift detection state
-        self.baseline_malignant_rate = 0.372  # From training data
+        self.baseline_malignant_rate = 0.372
         self.drift_detected_count = 0
         self.concept_drift_detected_count = 0
         self.fairness_issue_count = 0
 
         # Thresholds
-        self.DATA_DRIFT_THRESHOLD = 3.0  # z-score threshold
-        self.CONCEPT_DRIFT_THRESHOLD = 0.15  # 15% flip rate
-        self.FAIRNESS_CONFIDENCE_THRESHOLD = 0.10  # 10% confidence gap
-        self.FAIRNESS_IMBALANCE_THRESHOLD = 0.20  # 20% deviation from baseline
+        self.DATA_DRIFT_THRESHOLD = 3.0
+        self.CONCEPT_DRIFT_THRESHOLD = 0.15
+        self.FAIRNESS_CONFIDENCE_THRESHOLD = 0.10
+        self.FAIRNESS_IMBALANCE_THRESHOLD = 0.20
         
         drift_simulation_enabled.set(1 if enable_simulation else 0)
         
@@ -230,20 +217,9 @@ class ModelMetricsTracker:
         print(f"   Window size: {window_size}")
         print(f"   Simulation:  {'ENABLED' if enable_simulation else 'DISABLED'}")
     
-    
-    # ========================================
-    # VALIDATION METRICS (load once)
-    # ========================================
-    
     def load_validation_metrics(self, metrics_dict):
-        """
-        Load validation metrics from model evaluation
-        
-        Args:
-            metrics_dict: Dictionary with validation metrics
-        """
+        """Load validation metrics from model evaluation"""
         try:
-            # Helper function to safely set gauge
             def safe_set_gauge(gauge, value, name):
                 try:
                     if value is not None:
@@ -252,10 +228,9 @@ class ModelMetricsTracker:
                             gauge.set(float_value)
                             return True
                 except (ValueError, TypeError) as e:
-                    print(f"⚠️ Could not set {name}:  {e}")
+                    print(f"⚠️ Could not set {name}: {e}")
                 return False
             
-            # Performance metrics
             if 'f1_score' in metrics_dict:
                 safe_set_gauge(model_f1_score_validation, metrics_dict['f1_score'], 'F1 Score')
             
@@ -268,43 +243,40 @@ class ModelMetricsTracker:
             if 'recall' in metrics_dict:
                 safe_set_gauge(model_recall_validation, metrics_dict['recall'], 'Recall')
             
-            if 'specificity' in metrics_dict: 
+            if 'specificity' in metrics_dict:
                 safe_set_gauge(model_specificity_validation, metrics_dict['specificity'], 'Specificity')
             
-            if 'roc_auc' in metrics_dict:
+            if 'roc_auc' in metrics_dict: 
                 safe_set_gauge(model_roc_auc_validation, metrics_dict['roc_auc'], 'ROC-AUC')
             
             if 'pr_auc' in metrics_dict:
                 safe_set_gauge(model_pr_auc_validation, metrics_dict['pr_auc'], 'PR-AUC')
             
-            # Confusion matrix
-            if 'confusion_matrix' in metrics_dict:
+            if 'confusion_matrix' in metrics_dict: 
                 cm = metrics_dict['confusion_matrix']
                 model_true_positives.set(int(cm.get('tp', 0)))
                 model_true_negatives.set(int(cm.get('tn', 0)))
                 model_false_positives.set(int(cm.get('fp', 0)))
                 model_false_negatives.set(int(cm.get('fn', 0)))
             
-            # Model info - MUST convert all values to strings
-            if 'model_info' in metrics_dict:
+            if 'model_info' in metrics_dict: 
                 try:
                     info_dict = {}
                     for k, v in metrics_dict['model_info'].items():
-                        # Convert everything to string
                         if v is None:
                             info_dict[k] = 'unknown'
                         else:
                             info_dict[k] = str(v)
                     
                     model_info.info(info_dict)
-                    print(f"✅ Model info set:  {list(info_dict.keys())}")
+                    print(f"✅ Model info set: {list(info_dict.keys())}")
                 
                 except Exception as e:
-                    print(f"⚠️ Could not set model_info:  {e}")
+                    print(f"⚠️ Could not set model_info: {e}")
             
             print("✅ Validation metrics loaded successfully")
             print(f"   F1: {metrics_dict.get('f1_score', 'N/A')}")
-            print(f"   Accuracy: {metrics_dict.get('accuracy', 'N/A')}")
+            print(f"   Accuracy:  {metrics_dict.get('accuracy', 'N/A')}")
             print(f"   ROC-AUC: {metrics_dict.get('roc_auc', 'N/A')}")
             
         except Exception as e:
@@ -312,17 +284,12 @@ class ModelMetricsTracker:
             import traceback
             print(traceback.format_exc())
     
-    # ========================================
-    # PRODUCTION METRICS (update continuously)
-    # ========================================
-    
     def set_feature_baseline(self, means, stds):
         """Set baseline feature statistics from training data"""
         self.feature_baseline = {
             'means': np.array(means),
             'stds': np.array(stds),
             'n_features': len(means)
-
         }
         print(f"✅ Feature baseline set: {len(means)} features")
     
@@ -331,40 +298,25 @@ class ModelMetricsTracker:
         self.predictions.append(pred)
         self.probabilities.append(prob)
         
-        # Store features for concept drift detection
         if features is not None:
             self.features_history.append(features)
 
-        # Track by diagnosis
-        if pred == 1: 
+        if pred == 1:
             self.malignant_count += 1
             self.malignant_confidences.append(prob)
         else:
             self.benign_count += 1
             self.benign_confidences.append(prob)
 
-    # ========================================
-    # DATA DRIFT DETECTION
-    # ========================================
-    
     def detect_data_drift(self):
-        """
-        Detect data drift using z-score analysis
-        
-        Returns:
-            bool: True if drift detected
-            float: Drift score (0-1)
-        """
+        """Detect data drift using z-score analysis"""
         if self.feature_baseline is None or len(self.features_history) < 30:
             return False, 0.0
         
-        # Get recent features
         recent_features = np.array(list(self.features_history)[-100:])
-        
         baseline_means = self.feature_baseline['means']
         baseline_stds = self.feature_baseline['stds']
         
-        # Calculate z-scores for each feature
         z_scores = []
         drifted_count = 0
         
@@ -376,107 +328,70 @@ class ModelMetricsTracker:
             if z > self.DATA_DRIFT_THRESHOLD:
                 drifted_count += 1
                 
-            # Update per-feature drift metric
             feature_mean_drift.labels(feature_index=str(i)).set(float(z))
         
-        # Aggregate drift score (mean z-score, normalized)
         avg_z_score = np.mean(z_scores)
-        drift_score = min(avg_z_score / 5.0, 1.0)  # Normalize to [0,1]
-        
-        # Drift detected if >= 3 features have z-score > threshold
+        drift_score = min(avg_z_score / 5.0, 1.0)
         drift_detected = drifted_count >= 3
         
-        # Update metrics
         data_drift_detected.set(1 if drift_detected else 0)
         data_drift_score.set(drift_score)
         features_drifted_count.set(drifted_count)
         
         if drift_detected:
             self.drift_detected_count += 1
-            print(f"⚠️  DATA DRIFT DETECTED: {drifted_count} features drifted (z-score > {self.DATA_DRIFT_THRESHOLD})")
+            print(f"⚠️ DATA DRIFT DETECTED: {drifted_count} features drifted")
         
         return drift_detected, drift_score
-    
 
-    # ========================================
-    # CONCEPT DRIFT DETECTION
-    # ========================================
-    
     def detect_concept_drift(self):
-        """
-        Detect concept drift using prediction flip rate
-        
-        Concept drift = relationship between X and Y changes
-        We detect this by checking if similar inputs now get different predictions
-        
-        Returns:
-            bool: True if concept drift detected
-            float:  Flip rate (0-1)
-        """
+        """Detect concept drift using prediction flip rate"""
         if len(self.features_history) < 100 or len(self.predictions) < 100:
             return False, 0.0
         
         recent_features = np.array(list(self.features_history)[-100:])
         recent_predictions = np.array(list(self.predictions)[-100:])
         
-        # Find pairs of similar inputs (Euclidean distance < threshold)
         flip_count = 0
         pair_count = 0
-        similarity_threshold = 2.0  # Adjust based on scaled features
+        similarity_threshold = 2.0
         
         for i in range(len(recent_features) - 10):
             for j in range(i + 1, min(i + 10, len(recent_features))):
                 distance = np.linalg.norm(recent_features[i] - recent_features[j])
                 
-                if distance < similarity_threshold: 
+                if distance < similarity_threshold:
                     pair_count += 1
-                    # Check if predictions differ
-                    if recent_predictions[i] != recent_predictions[j]: 
+                    if recent_predictions[i] != recent_predictions[j]:
                         flip_count += 1
         
         if pair_count == 0:
             return False, 0.0
         
         flip_rate = flip_count / pair_count
-        
         concept_detected = flip_rate > self.CONCEPT_DRIFT_THRESHOLD
         
-        # Update metrics
         concept_drift_detected.set(1 if concept_detected else 0)
         concept_drift_score.set(flip_rate)
         prediction_flip_rate.set(flip_rate)
         
         if concept_detected:
             self.concept_drift_detected_count += 1
-            print(f"⚠️  CONCEPT DRIFT DETECTED:  Flip rate = {flip_rate:.2%} (threshold: {self.CONCEPT_DRIFT_THRESHOLD:.2%})")
+            print(f"⚠️ CONCEPT DRIFT DETECTED:  Flip rate = {flip_rate:.2%}")
         
         return concept_detected, flip_rate
     
-    # ========================================
-    # FAIRNESS ISSUE DETECTION
-    # ========================================
-    
     def detect_fairness_issues(self):
-        """
-        Detect fairness issues: 
-        1. Confidence disparity between classes
-        2. Prediction imbalance (deviation from baseline distribution)
-        
-        Returns:
-            bool: True if fairness issue detected
-            dict: Fairness metrics
-        """
+        """Detect fairness issues"""
         if len(self.benign_confidences) < 30 or len(self.malignant_confidences) < 30:
             return False, {}
         
-        # 1. Confidence Disparity
         avg_benign_conf = np.mean(list(self.benign_confidences))
         avg_malignant_conf = np.mean(list(self.malignant_confidences))
         confidence_gap = abs(avg_benign_conf - avg_malignant_conf)
         
         confidence_issue = confidence_gap > self.FAIRNESS_CONFIDENCE_THRESHOLD
         
-        # 2. Prediction Imbalance
         total = self.malignant_count + self.benign_count
         if total > 0:
             current_malignant_rate = self.malignant_count / total
@@ -486,22 +401,20 @@ class ModelMetricsTracker:
             imbalance = 0.0
             imbalance_issue = False
         
-        # Overall fairness issue
         fairness_issue = confidence_issue or imbalance_issue
         
-        # Update metrics
         fairness_issue_detected.set(1 if fairness_issue else 0)
         confidence_disparity_score.set(confidence_gap)
         prediction_imbalance_score.set(imbalance)
         
-        if fairness_issue:
+        if fairness_issue: 
             self.fairness_issue_count += 1
             issues = []
             if confidence_issue:
                 issues.append(f"Confidence gap: {confidence_gap:.2%}")
-            if imbalance_issue:
+            if imbalance_issue: 
                 issues.append(f"Imbalance: {imbalance:.2%}")
-            print(f"⚠️  FAIRNESS ISSUE DETECTED: {', '.join(issues)}")
+            print(f"⚠️ FAIRNESS ISSUE DETECTED:  {', '.join(issues)}")
         
         return fairness_issue, {
             'confidence_gap': confidence_gap,
@@ -511,84 +424,119 @@ class ModelMetricsTracker:
         }
     
     # ========================================
-    # DRIFT SIMULATION (for testing)
+    # ⭐ DRIFT SIMULATION WITH TIME WINDOWS
     # ========================================
     
     def simulate_drift(self):
         """
-        FORCE ALL DRIFT TO 1 FOR DEMO
-        Simplified for guaranteed alert triggering
+        Simulate drift with time windows for demo
+        - Drift active for 4-5 minutes
+        - Normal for rest of cycle
+        - Cycle repeats every 15 minutes
         """
         if not self.enable_simulation:
             return
         
         current_time = time.time()
-        cycle_time = int(current_time) % 900
+        cycle_time = int(current_time) % 900  # 15 min cycle
         
-        print(f"🎭 FORCING ALL DRIFT TO 1 (cycle_time={cycle_time}s)")
+        print(f"🎭 Simulating drift...  (cycle_time={cycle_time}s / 900s)")
         
-        # FORCE DATA DRIFT = 1
-        data_drift_detected.set(1)
-        data_drift_score.set(0.85)
-        features_drifted_count.set(5)
+        # ========================================
+        # DATA DRIFT - Active 60-300s (4 minutes)
+        # ========================================
+        if 60 <= cycle_time < 300:
+            # DRIFT ACTIVE
+            drifted_features = random.randint(3, 7)
+            for i in range(drifted_features):
+                simulated_z_score = random.uniform(3.5, 6.0)
+                feature_mean_drift.labels(feature_index=str(i)).set(simulated_z_score)
+            
+            drift_score = random.uniform(0.7, 0.95)
+            data_drift_detected.set(1)
+            data_drift_score.set(drift_score)
+            features_drifted_count.set(drifted_features)
+            
+            print(f"   📊 DATA DRIFT ACTIVE:  {drifted_features} features, score={drift_score:.2f}")
+        else:
+            # NORMAL STATE
+            for i in range(3):
+                feature_mean_drift.labels(feature_index=str(i)).set(random.uniform(0.5, 2.5))
+            
+            data_drift_detected.set(0)
+            data_drift_score.set(random.uniform(0.05, 0.15))
+            features_drifted_count.set(0)
+            print(f"   📊 DATA DRIFT:  normal")
         
-        for i in range(5):
-            feature_mean_drift.labels(feature_index=str(i)).set(random.uniform(3.5, 6.0))
+        # ========================================
+        # CONCEPT DRIFT - Active 330-600s (4. 5 minutes)
+        # ========================================
+        if 330 <= cycle_time < 600:
+            # DRIFT ACTIVE
+            flip_rate = random.uniform(0.20, 0.35)
+            concept_drift_detected.set(1)
+            concept_drift_score.set(flip_rate)
+            prediction_flip_rate.set(flip_rate)
+            
+            print(f"   🔄 CONCEPT DRIFT ACTIVE: flip_rate={flip_rate:.2%}")
+        else:
+            # NORMAL STATE
+            flip_rate = random.uniform(0.02, 0.08)
+            concept_drift_detected.set(0)
+            concept_drift_score.set(flip_rate)
+            prediction_flip_rate.set(flip_rate)
+            print(f"   🔄 CONCEPT DRIFT: normal")
         
-        # FORCE CONCEPT DRIFT = 1
-        concept_drift_detected.set(1)
-        concept_drift_score.set(0.28)
-        prediction_flip_rate.set(0.28)
-        
-        # FORCE FAIRNESS ISSUE = 1
-        fairness_issue_detected.set(1)
-        confidence_disparity_score.set(0.15)
-        prediction_imbalance_score.set(0.25)
-        
-        print(f"   ✅ data_drift_detected=1, concept_drift_detected=1, fairness_issue_detected=1")
+        # ========================================
+        # FAIRNESS ISSUE - Active 630-870s (4 minutes)
+        # ========================================
+        if 630 <= cycle_time < 870:
+            # ISSUE ACTIVE
+            conf_gap = random.uniform(0.12, 0.20)
+            imbalance = random.uniform(0.22, 0.35)
+            
+            fairness_issue_detected.set(1)
+            confidence_disparity_score.set(conf_gap)
+            prediction_imbalance_score.set(imbalance)
+            
+            print(f"   ⚖️ FAIRNESS ISSUE ACTIVE:  conf_gap={conf_gap:.2%}, imbalance={imbalance:.2%}")
+        else:
+            # NORMAL STATE
+            fairness_issue_detected.set(0)
+            confidence_disparity_score.set(random.uniform(0.01, 0.05))
+            prediction_imbalance_score.set(random.uniform(0.02, 0.08))
+            print(f"   ⚖️ FAIRNESS:  normal")
 
-    # ========================================
-    # CALCULATE METRICS
-    # ========================================
-    
     def calculate_metrics(self):
         """Calculate all production metrics including drift detection"""
         
-        # ========================================
-        # STEP 1: DRIFT DETECTION (simulation or real)
-        # ========================================
-        # Execute FIRST, regardless of predictions count
-
-        print(f"🔍 calculate_metrics() CALLED")
-        print(f"   enable_simulation = {self.enable_simulation}")
-        print(f"   Current time: {time.time()}")
-        
+        # STEP 1: DRIFT DETECTION
         if self.enable_simulation:
-            # Simulation uses time-based random numbers, doesn't need predictions
-            print(f"   ✅ About to call simulate_drift()")
-            # Simulation uses time-based random numbers, doesn't need predictions
             self.simulate_drift()
-            print(f"   ✅ simulate_drift() completed")
         else:
-            # Real detection requires predictions
             if len(self.predictions) >= 10:
                 self.detect_data_drift()
                 self.detect_concept_drift()
                 self.detect_fairness_issues()
+            else:
+                # Reset to 0 if insufficient data
+                data_drift_detected.set(0)
+                data_drift_score.set(0)
+                features_drifted_count.set(0)
+                concept_drift_detected.set(0)
+                concept_drift_score.set(0)
+                prediction_flip_rate.set(0)
+                fairness_issue_detected.set(0)
+                confidence_disparity_score.set(0)
+                prediction_imbalance_score.set(0)
         
-        # ========================================
-        # STEP 2: PRODUCTION METRICS (requires predictions)
-        # ========================================
-        # Only calculate if we have enough predictions
-        
+        # STEP 2: PRODUCTION METRICS
         if len(self.predictions) < 10:
-            return  # Skip production metrics, but drift simulation already executed above
+            return
         
-        # Existing metrics calculation
         preds = np.array(list(self.predictions))
         probs = np.array(list(self.probabilities))
         
-        # Prediction distribution
         malignant_rate = float(np.mean(preds))
         benign_rate = 1.0 - malignant_rate
         
@@ -596,7 +544,6 @@ class ModelMetricsTracker:
         production_malignant_rate.set(malignant_rate * 100)
         production_benign_rate.set(benign_rate * 100)
         
-        # Confidence metrics
         avg_confidence = float(np.mean(probs))
         confidence_drift_score.set(avg_confidence)
         
@@ -612,11 +559,11 @@ class ModelMetricsTracker:
         """Get current production statistics"""
         total = self.malignant_count + self.benign_count
         return {
-            'total_predictions':  total,
+            'total_predictions': total,
             'malignant_count': self.malignant_count,
             'benign_count': self.benign_count,
             'malignant_rate': (self.malignant_count / total * 100) if total > 0 else 0,
-            'benign_rate': (self.benign_count / total * 100) if total > 0 else 0,
+            'benign_rate':  (self.benign_count / total * 100) if total > 0 else 0,
             'window_size': len(self.predictions),
             'has_baseline': self.feature_baseline is not None,
             'avg_confidence':  float(np.mean(list(self.probabilities))) if len(self.probabilities) > 0 else 0

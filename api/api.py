@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import threading
 from typing import Optional
+from datetime import datetime, timedelta
 
 # Añadir directorio raíz al path para encontrar logic/
 root_dir = Path(__file__).resolve().parent.parent
@@ -16,7 +17,6 @@ from api.metrics_tracker import ModelMetricsTracker, prediction_confidence_by_di
 from io import StringIO
 import traceback
 import time
-from datetime import datetime
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 import json
@@ -40,19 +40,22 @@ app = FastAPI(
 # ============================================
 retraining_lock = threading.Lock()
 retraining_in_progress = False
+last_retrain_time = None  # ⭐ AÑADIDO
+retraining_cooldown_minutes = 30  # ⭐ AÑADIDO
+
 retraining_status = {
     "status": "idle",
     "last_triggered": None,
     "last_completed": None,
     "trigger_reason": None,
-    "deployed":  None,
+    "deployed": None,
     "error": None
 }
 
 # ============================================
 # RETRAINING FUNCTION
 # ============================================
-def run_retraining(trigger_reason:  str):
+def run_retraining(trigger_reason: str):
     """
     Execute model retraining pipeline
     """
@@ -81,22 +84,17 @@ def run_retraining(trigger_reason:  str):
         results = pipeline.run(trigger_reason)
         
         if results['success']:
-            
             # Check if new model was deployed
             if results.get('deployed', False):
                 logger.info("✅ New model deployed via CI/CD")
                 logger.info("   Waiting for Render to redeploy with new artifacts...")
                 
-                # The container will be replaced by Render's CI/CD
-                # This instance will be shut down
                 retraining_status['status'] = 'completed'
                 retraining_status['deployed'] = True
                 retraining_status['deployment_method'] = 'cicd_triggered'
                 retraining_status['last_completed'] = datetime.now().isoformat()
-                
             else:
-                # Model not better, no deployment
-                logger.info("⚠️ New model not better, keeping current model")
+                logger.info("⚠️ New model not deployed")
                 
                 retraining_status['status'] = 'completed'
                 retraining_status['deployed'] = False
@@ -263,7 +261,7 @@ try:
             metrics_tracker.load_validation_metrics(validation_metrics)
             print("✅ Validation metrics loaded from artifacts/validation_metrics.json")
         else:
-            print("⚠️  validation_metrics.json not found.  Using placeholder metrics.")
+            print("⚠️ validation_metrics.json not found.  Using placeholder metrics.")
             metrics_tracker.load_validation_metrics({
                 'f1_score': 0.0,
                 'accuracy': 0.0,
@@ -282,7 +280,7 @@ try:
             })
     
     except Exception as e:
-        print(f"⚠️  Error loading validation metrics: {e}")
+        print(f"⚠️ Error loading validation metrics: {e}")
         print("   Using placeholder metrics.")
     
     # ===== LOAD FEATURE BASELINE FOR DRIFT DETECTION =====
@@ -301,11 +299,11 @@ try:
             )
             print("✅ Feature baseline loaded successfully")
         else:
-            print("⚠️  feature_baseline.npz not found.")
+            print("⚠️ feature_baseline.npz not found.")
             print("   Drift detection will be disabled.")
     
-    except Exception as e: 
-        print(f"⚠️  Error loading feature baseline: {e}")
+    except Exception as e:
+        print(f"⚠️ Error loading feature baseline: {e}")
         print("   Drift detection will be disabled.")
     
     print("="*60 + "\n")
@@ -469,26 +467,13 @@ async def stats():
 async def metrics():
     """Prometheus metrics endpoint"""
     try:
-        logger.info("="*60)
-        logger.info("📊 /metrics CALLED")
-        logger.info(f"   ENABLE_DRIFT_SIMULATION = {ENABLE_DRIFT_SIMULATION}")
-        logger.info(f"   metrics_tracker.enable_simulation = {metrics_tracker.enable_simulation}")
-        logger.info("="*60)
         # Calculate health and metrics
         calculate_health_score()
-        logger.info("🔄 About to call calculate_metrics()")
         metrics_tracker.calculate_metrics()
-        logger.info("✅ calculate_metrics() returned")
-
-        content = generate_latest()
-        content_str = content.decode('utf-8')
-        for line in content_str.split('\n'):
-            if 'data_drift_detected' in line and not line.startswith('#'):
-                logger.info(f"   DRIFT METRIC: {line}")
         
         # Generate Prometheus format
         return Response(
-            content=content,
+            content=generate_latest(),
             media_type=CONTENT_TYPE_LATEST
         )
     
@@ -497,7 +482,7 @@ async def metrics():
         logger.error(traceback.format_exc())
         
         return Response(
-            content=f"# Error generating metrics: {str(e)}\n",
+            content=f"# Error generating metrics:  {str(e)}\n",
             media_type="text/plain",
             status_code=500
         )
@@ -524,7 +509,7 @@ async def predict(file: UploadFile = File(... )):
         csv_file_size_bytes.observe(file_size)
         
         df = pd.read_csv(StringIO(contents.decode('utf-8')))
-        logger.info(f"\n📁 File: {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
+        logger.info(f"\n📁 File:  {file.filename}, Size: {file_size} bytes, Shape: {df.shape}")
         
         df = clean_dataframe(df)
         
@@ -593,7 +578,7 @@ async def predict(file: UploadFile = File(... )):
             "predictions": predictions,
             "summary": {
                 "total_rows": len(predictions),
-                "successful": success_count,
+                "successful":  success_count,
                 "errors": error_count,
                 "features_used":  EXPECTED_FEATURES,
                 "processing_time_seconds": round(batch_duration, 3),
@@ -622,7 +607,7 @@ async def predict(file: UploadFile = File(... )):
     except Exception as e:
         prediction_requests_total.labels(status='error').inc()
         prediction_errors_total.labels(error_type='unknown').inc()
-        print(f"❌ Unexpected error: {traceback.format_exc()}")
+        logger.error(f"❌ Unexpected error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ========================================
@@ -637,12 +622,11 @@ async def webhook_retrain(
     """
     Webhook triggered by Grafana Cloud Alerting for automatic retraining
     """
-    global retraining_in_progress, retraining_status
+    global retraining_in_progress, retraining_status, last_retrain_time
     
     # ===== AUTHENTICATION =====
     import base64
     
-    # Get secret from environment (más seguro)
     webhook_secret = os.environ.get("WEBHOOK_SECRET", "your-webhook-secret")
     expected_auth = "Basic " + base64.b64encode(f"admin:{webhook_secret}".encode()).decode()
     
@@ -655,14 +639,12 @@ async def webhook_retrain(
         logger.info(f"📥 Webhook payload received: {json.dumps(payload, indent=2)}")
         
         # ===== EXTRACT ALERT INFO =====
-        # Grafana sends alerts in 'alerts' array
         alerts = payload.get('alerts', [])
         
         if not alerts:
             logger.info("No alerts in payload, ignoring")
             return {"status":  "no_alerts", "message": "No alerts to process"}
         
-        # Process first firing alert
         firing_alerts = [a for a in alerts if a.get('status') == 'firing']
         
         if not firing_alerts: 
@@ -680,13 +662,30 @@ async def webhook_retrain(
             logger.warning("⚠️ Retraining already in progress, skipping")
             return {
                 "status": "already_in_progress",
-                "message": "Retraining already running",
+                "message":  "Retraining already running",
                 "current_status": retraining_status
             }
         
+        # ===== ⭐ CHECK COOLDOWN =====
+        if last_retrain_time is not None:
+            time_since_last = datetime.now() - last_retrain_time
+            cooldown = timedelta(minutes=retraining_cooldown_minutes)
+            
+            if time_since_last < cooldown:
+                remaining = cooldown - time_since_last
+                logger.warning(f"⚠️ Retraining cooldown active ({remaining.seconds//60} min remaining)")
+                return {
+                    "status": "cooldown_active",
+                    "message":  f"Retraining on cooldown, wait {remaining.seconds//60} minutes",
+                    "last_retrain":  last_retrain_time.isoformat(),
+                    "cooldown_minutes": retraining_cooldown_minutes
+                }
+        
         # ===== TRIGGER RETRAINING =====
+        last_retrain_time = datetime.now()  # ⭐ ACTUALIZAR
+        
         retraining_status['status'] = 'triggered'
-        retraining_status['last_triggered'] = datetime.now().isoformat()
+        retraining_status['last_triggered'] = last_retrain_time.isoformat()
         retraining_status['trigger_reason'] = alert_name
         retraining_status['alert_value'] = str(alert_value)
         
@@ -711,7 +710,7 @@ async def webhook_retrain(
         logger.error(f"❌ Invalid JSON payload: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
     
-    except Exception as e:
+    except Exception as e: 
         logger.error(f"❌ Error processing webhook: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
