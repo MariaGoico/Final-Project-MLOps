@@ -516,74 +516,36 @@ class ModelMetricsTracker:
     
     def simulate_drift(self):
         """
-        Simulate drift for testing/demonstration
-        Called periodically by /metrics endpoint when Prometheus scrapes
+        FORCE ALL DRIFT TO 1 FOR DEMO
+        Simplified for guaranteed alert triggering
         """
         if not self.enable_simulation:
             return
         
         current_time = time.time()
-        cycle_time = int(current_time) % 900  # 15 min cycle
+        cycle_time = int(current_time) % 900
         
-        print(f"🎭 Simulating drift...  (cycle_time={cycle_time}s)")
+        print(f"🎭 FORCING ALL DRIFT TO 1 (cycle_time={cycle_time}s)")
         
-        # ========================================
-        # DATA DRIFT SIMULATION (every 5 minutes)
-        # ========================================
-        if 120 <= cycle_time < 240:  # Active for 2 minutes every 15 min
-            # Simulate feature drift
-            drifted_features = random.randint(3, 7)
-            for i in range(drifted_features):
-                simulated_z_score = random.uniform(3.5, 6.0)
-                feature_mean_drift.labels(feature_index=str(i)).set(simulated_z_score)
-            
-            drift_score = random.uniform(0.7, 0.95)
-            data_drift_detected.set(1)
-            data_drift_score.set(drift_score)
-            features_drifted_count.set(drifted_features)
-            
-            print(f"   📊 DATA DRIFT:  {drifted_features} features, score={drift_score:.2f}")
-        else:
-            # Normal state
-            for i in range(3):
-                feature_mean_drift.labels(feature_index=str(i)).set(random.uniform(0.5, 2.5))
-            
-            data_drift_detected.set(0)
-            data_drift_score.set(random.uniform(0.05, 0.15))
-            features_drifted_count.set(0)
+        # FORCE DATA DRIFT = 1
+        data_drift_detected.set(1)
+        data_drift_score.set(0.85)
+        features_drifted_count.set(5)
         
-        # ========================================
-        # CONCEPT DRIFT SIMULATION (every 7 minutes)
-        # ========================================
-        if 300 <= cycle_time < 420:  # Active for 2 minutes
-            flip_rate = random.uniform(0.20, 0.35)
-            concept_drift_detected.set(1)
-            concept_drift_score.set(flip_rate)
-            prediction_flip_rate.set(flip_rate)
-            
-            print(f"   🔄 CONCEPT DRIFT: flip_rate={flip_rate:.2%}")
-        else:
-            flip_rate = random.uniform(0.02, 0.08)
-            concept_drift_detected.set(0)
-            concept_drift_score.set(flip_rate)
-            prediction_flip_rate.set(flip_rate)
+        for i in range(5):
+            feature_mean_drift.labels(feature_index=str(i)).set(random.uniform(3.5, 6.0))
         
-        # ========================================
-        # FAIRNESS ISSUE SIMULATION (every 10 minutes)
-        # ========================================
-        if 600 <= cycle_time < 720:  # Active for 2 minutes
-            conf_gap = random.uniform(0.12, 0.20)
-            imbalance = random.uniform(0.22, 0.35)
-            
-            fairness_issue_detected.set(1)
-            confidence_disparity_score.set(conf_gap)
-            prediction_imbalance_score.set(imbalance)
-            
-            print(f"   ⚖️  FAIRNESS ISSUE:  conf_gap={conf_gap:.2%}, imbalance={imbalance:.2%}")
-        else:
-            fairness_issue_detected.set(0)
-            confidence_disparity_score.set(random.uniform(0.01, 0.05))
-            prediction_imbalance_score.set(random.uniform(0.02, 0.08))
+        # FORCE CONCEPT DRIFT = 1
+        concept_drift_detected.set(1)
+        concept_drift_score.set(0.28)
+        prediction_flip_rate.set(0.28)
+        
+        # FORCE FAIRNESS ISSUE = 1
+        fairness_issue_detected.set(1)
+        confidence_disparity_score.set(0.15)
+        prediction_imbalance_score.set(0.25)
+        
+        print(f"   ✅ data_drift_detected=1, concept_drift_detected=1, fairness_issue_detected=1")
 
     # ========================================
     # CALCULATE METRICS

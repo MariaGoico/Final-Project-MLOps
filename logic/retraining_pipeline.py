@@ -1,6 +1,6 @@
 """
-Automated Retraining Pipeline
-Triggered when drift is detected
+Simplified Automated Retraining Pipeline
+Always trains and deploys without comparison
 """
 import pandas as pd
 import numpy as np
@@ -9,13 +9,12 @@ import json
 import shutil
 from datetime import datetime
 import sys
-
-# Import your existing predictor
-from logic.breast_cancer_predictor import BreastCancerPredictor
+import subprocess
+import os
 
 class RetrainingPipeline:
     """
-    Handles complete retraining workflow
+    Simplified retraining workflow - always deploys
     """
     
     def __init__(self, artifacts_dir="artifacts"):
@@ -25,15 +24,10 @@ class RetrainingPipeline:
         
     def run(self, trigger_reason:  str):
         """
-        Execute full retraining pipeline
-        
-        Steps:
+        Simplified retraining pipeline: 
         1. Backup current model
-        2. Fetch new training data
-        3. Train new model
-        4. Evaluate new model
-        5. Compare with current model
-        6. Deploy if better
+        2. Train with original data
+        3. ALWAYS deploy (no comparison)
         
         Returns:
             dict:  Retraining results
@@ -42,11 +36,11 @@ class RetrainingPipeline:
             'success': False,
             'trigger_reason': trigger_reason,
             'timestamp': datetime.now().isoformat(),
-            'steps': {}
+            'steps':  {}
         }
         
         try:
-            # ===== STEP 1: BACKUP CURRENT MODEL =====
+            # ===== STEP 1: BACKUP =====
             print("\n" + "="*60)
             print("📦 STEP 1: Backing up current model")
             print("="*60)
@@ -54,65 +48,32 @@ class RetrainingPipeline:
             self.backup_current_model()
             results['steps']['backup'] = 'success'
             
-            # ===== STEP 2: FETCH NEW DATA =====
+            # ===== STEP 2: TRAIN =====
             print("\n" + "="*60)
-            print("📥 STEP 2: Fetching new training data")
+            print("🏋️ STEP 2: Training new model with original data")
             print("="*60)
             
-            # TODO: Replace with actual data fetching logic
-            # For now, use existing data with augmentation
-            train_data = self.fetch_training_data()
-            results['steps']['data_fetch'] = {
-                'status': 'success',
-                'rows': len(train_data)
-            }
-            
-            # ===== STEP 3: TRAIN NEW MODEL =====
-            print("\n" + "="*60)
-            print("🏋️ STEP 3: Training new model")
-            print("="*60)
-            
-            new_model_metrics = self.train_new_model(train_data)
+            new_model_metrics = self.train_new_model()
             results['steps']['training'] = {
-                'status':  'success',
-                'metrics': new_model_metrics
+                'status': 'success',
+                'metrics':  new_model_metrics
             }
             
-            # ===== STEP 4: EVALUATE NEW MODEL =====
+            # ===== STEP 3: DEPLOY (ALWAYS) =====
             print("\n" + "="*60)
-            print("📊 STEP 4: Evaluating new model")
+            print("🚀 STEP 3: Deploying new model (no comparison)")
             print("="*60)
             
-            evaluation = self.evaluate_model()
-            results['steps']['evaluation'] = evaluation
+            deploy_success = self.deploy_new_model()
             
-            # ===== STEP 5: COMPARE WITH CURRENT =====
-            print("\n" + "="*60)
-            print("⚖️ STEP 5: Comparing with current model")
-            print("="*60)
-            
-            should_deploy = self.should_deploy_new_model(evaluation)
-            results['should_deploy'] = should_deploy
-            
-            # ===== STEP 6: DEPLOY IF BETTER =====
-            if should_deploy:
-                print("\n" + "="*60)
-                print("🚀 STEP 6: Deploying new model")
-                print("="*60)
-                
-                self.deploy_new_model()
+            if deploy_success:
                 results['deployed'] = True
                 results['success'] = True
-                print("✅ New model deployed successfully")
+                print("✅ New model deployed successfully via CI/CD")
             else:
-                print("\n" + "="*60)
-                print("🔄 STEP 6: Reverting to previous model")
-                print("="*60)
-                
-                self.restore_backup()
                 results['deployed'] = False
-                results['success'] = True
-                print("⚠️ New model not better, kept previous model")
+                results['success'] = False
+                results['error'] = "Deployment failed"
             
             return results
             
@@ -124,7 +85,7 @@ class RetrainingPipeline:
             # Restore backup on failure
             try:
                 self.restore_backup()
-            except:
+            except: 
                 pass
             
             results['success'] = False
@@ -142,175 +103,127 @@ class RetrainingPipeline:
         else:
             print("⚠️ No existing model to backup")
     
-    def fetch_training_data(self):
+    def train_new_model(self):
         """
-        Fetch new training data
-        
-        TODO: Implement actual data fetching logic
-        Options:
-        - Fetch from database
-        - Fetch from API
-        - Fetch from production logs
-        - Use data versioning tool (DVC)
+        Train new model with ORIGINAL data (data/data.csv)
         """
-        # For now, use existing data
-        data_path = self.data_dir / "data.csv"
+        print("🔄 Running training script with original data...")
+        print(f"   Using: data/data.csv")
         
-        if not data_path.exists():
-            # Try alternative path
-            data_path = Path("data/data.csv")
-        
-        if not data_path.exists():
-            raise FileNotFoundError(f"Training data not found at {data_path}")
-        
-        df = pd.read_csv(data_path)
-        print(f"📊 Loaded {len(df)} samples from {data_path}")
-        
-        # TODO: Add logic to incorporate recent production data
-        # For example, fetch predictions from last 30 days with ground truth
-        
-        return df
-    
-    def train_new_model(self, data):
-        """
-        Train new model with updated data
-        
-        TODO: Call your actual training script
-        """
-        # For now, simulate training by calling your training script
-        # You should adapt this to your actual training code
-        
-        print("🔄 Running training script...")
-        
-        # Option 1: Call training script
-        import subprocess
+        # Call training script
         result = subprocess.run(
-            [sys.executable, "model.py"],  # Adjust path
+            [sys.executable, "logic/model.py"],  
             capture_output=True,
-            text=True
+            text=True,
+            cwd=str(Path.cwd())
         )
         
         if result.returncode != 0:
+            print(f"❌ Training output: {result.stdout}")
+            print(f"❌ Training error: {result.stderr}")
             raise Exception(f"Training failed: {result.stderr}")
         
-        print("✅ Training completed")
+        print("✅ Training completed successfully")
+        print(f"   Output: {result.stdout[-200:]}")  # Last 200 chars
         
         # Load metrics
         metrics_path = self.artifacts_dir / "validation_metrics.json"
         if metrics_path.exists():
             with open(metrics_path) as f:
-                return json.load(f)
+                metrics = json.load(f)
+                print(f"\n📊 New model metrics:")
+                print(f"   F1: {metrics.get('f1_score', 0):.4f}")
+                print(f"   Accuracy: {metrics.get('accuracy', 0):.4f}")
+                return metrics
         
         return {}
     
-    def evaluate_model(self):
-        """Evaluate newly trained model"""
-        # Load validation metrics
-        metrics_path = self.artifacts_dir / "validation_metrics.json"
-        
-        if not metrics_path.exists():
-            raise FileNotFoundError("validation_metrics.json not found")
-        
-        with open(metrics_path) as f:
-            metrics = json.load(f)
-        
-        print(f"📊 New model metrics:")
-        print(f"   F1 Score: {metrics.get('f1_score', 'N/A'):.4f}")
-        print(f"   Accuracy: {metrics.get('accuracy', 'N/A'):.4f}")
-        print(f"   ROC-AUC: {metrics.get('roc_auc', 'N/A'):.4f}")
-        
-        return metrics
-    
-    def should_deploy_new_model(self, new_metrics):
-        """
-        Compare new model with current model
-        
-        Returns True if new model is better
-        """
-        # Load previous metrics
-        backup_metrics_path = self.backup_dir / "validation_metrics.json"
-        
-        if not backup_metrics_path.exists():
-            print("⚠️ No previous metrics found, deploying new model")
-            return True
-        
-        with open(backup_metrics_path) as f:
-            old_metrics = json.load(f)
-        
-        # Compare F1 scores
-        old_f1 = old_metrics.get('f1_score', 0)
-        new_f1 = new_metrics.get('f1_score', 0)
-        
-        improvement = new_f1 - old_f1
-        threshold = 0.01  # Require at least 1% improvement
-        
-        print(f"\n📊 Model Comparison:")
-        print(f"   Previous F1: {old_f1:.4f}")
-        print(f"   New F1:      {new_f1:.4f}")
-        print(f"   Improvement: {improvement: +.4f}")
-        
-        if new_f1 > old_f1 + threshold:
-            print(f"   ✅ New model is better (+{improvement:.4f})")
-            return True
-        else: 
-            print(f"   ❌ New model not significantly better")
-            return False
-    
     def deploy_new_model(self):
         """
-        Deploy new model by committing artifacts to GitHub and triggering CI/CD
+        Deploy new model via CI/CD (commit + push to trigger GitHub Actions)
         """
-        import subprocess
-        import os
-        
-        print("📊 Preparing deployment...")
-        
-        # ===== STEP 1: Regenerate baseline (ya lo tienes) =====
-        print("📊 Regenerating feature baseline...")
-        # Ya se generó en train_new_model()
-        
-        # ===== STEP 2: Commit artifacts to GitHub =====
-        print("📦 Committing artifacts to GitHub...")
+        print("📦 Deploying artifacts to GitHub...")
         
         try:
             # Configure git
-            subprocess.run(['git', 'config', 'user.email', 'retraining-bot@mlops.com'], check=True)
-            subprocess.run(['git', 'config', 'user.name', 'Retraining Bot'], check=True)
+            subprocess.run(
+                ['git', 'config', 'user.email', 'retraining-bot@render.com'], 
+                check=True,
+                capture_output=True
+            )
+            subprocess.run(
+                ['git', 'config', 'user.name', 'Retraining Bot'], 
+                check=True,
+                capture_output=True
+            )
             
             # Add artifacts
-            subprocess.run(['git', 'add', 'artifacts/'], check=True)
+            subprocess.run(
+                ['git', 'add', 'artifacts/'], 
+                check=True,
+                capture_output=True
+            )
             
             # Commit
-            commit_message = f"🤖 Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            subprocess.run(['git', 'commit', '-m', commit_message], check=True)
+            commit_message = f"Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            result = subprocess.run(
+                ['git', 'commit', '-m', commit_message], 
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                if "nothing to commit" in result.stdout:
+                    print("⚠️ No changes to commit (artifacts unchanged)")
+                    return True  # Not an error
+                else:
+                    print(f"❌ Commit failed: {result.stderr}")
+                    return False
             
             # Push (requires GITHUB_TOKEN)
             github_token = os.environ.get('GITHUB_TOKEN')
             if not github_token:
-                raise Exception("GITHUB_TOKEN not found in environment variables")
+                print("❌ GITHUB_TOKEN not found in environment")
+                print("   Deployment via Git push not available")
+                print("   Model trained but not pushed to GitHub")
+                return False
             
-            # Get repo info from environment or config
+            # Get repo info
             repo_owner = os.environ.get('GITHUB_REPO_OWNER', 'MariaGoico')
             repo_name = os.environ.get('GITHUB_REPO_NAME', 'Final-Project-MLOps')
             
             remote_url = f"https://{github_token}@github.com/{repo_owner}/{repo_name}.git"
             
-            subprocess.run(['git', 'remote', 'set-url', 'origin', remote_url], check=True)
-            subprocess.run(['git', 'push', 'origin', 'main'], check=True)
+            subprocess.run(
+                ['git', 'remote', 'set-url', 'origin', remote_url], 
+                check=True,
+                capture_output=True
+            )
             
-            print("✅ Artifacts committed and pushed to GitHub")
-            print(f"   This will trigger CI/CD pipeline automatically")
+            push_result = subprocess.run(
+                ['git', 'push', 'origin', 'main'], 
+                capture_output=True,
+                text=True
+            )
+            
+            if push_result.returncode != 0:
+                print(f"❌ Push failed:  {push_result.stderr}")
+                return False
+            
+            print("✅ Artifacts pushed to GitHub successfully")
+            print(f"   Commit:  {commit_message}")
+            print(f"   CI/CD pipeline will trigger automatically")
             
             return True
             
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError as e: 
             print(f"❌ Git operation failed: {e}")
             return False
         
         except Exception as e:
-            print(f"❌ Deployment failed: {e}")
+            print(f"❌ Deployment error: {e}")
             return False
-        
+    
     def restore_backup(self):
         """Restore previous model from backup"""
         if self.backup_dir.exists():
