@@ -204,6 +204,7 @@ class XGBoostBreastCancerClassifier:
         # 1. Save Summary Plot (Global Importance)
         plt.figure(figsize=(10, 6))
         shap.summary_plot(shap_values, X_train, feature_names=feature_names, show=False)
+        os.makedirs("plots", exist_ok=True)
         summary_plot_path = "plots/shap_summary.png"
         plt.tight_layout()
         plt.savefig(summary_plot_path)
