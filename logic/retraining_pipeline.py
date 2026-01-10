@@ -112,7 +112,7 @@ class RetrainingPipeline:
         
         # Call training script
         result = subprocess.run(
-            [sys.executable, "logic/model.py"],  
+            [sys.executable, "model.py"],
             capture_output=True,
             text=True,
             cwd=str(Path.cwd())
