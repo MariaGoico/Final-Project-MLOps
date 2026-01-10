@@ -66,7 +66,7 @@ class TabNetBreastCancerClassifier:
 
         return X_train, X_val, X_test, y_train, y_val, y_test
 
-    def plot_confusion_matrix(self, y_true, y_pred, save_path="plots/confusion_matrix.png"):
+    def plot_confusion_matrix(self, y_true, y_pred, save_path="plots/tabnet/confusion_matrix.png"):
         cm = confusion_matrix(y_true, y_pred)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
         disp.plot()
@@ -75,7 +75,7 @@ class TabNetBreastCancerClassifier:
         plt.savefig(save_path)
         plt.close()
 
-    def plot_roc_curve(self, y_true, y_proba, save_path="plots/roc_curve.png"):
+    def plot_roc_curve(self, y_true, y_proba, save_path="plots/tabnet/roc_curve.png"):
         fpr, tpr, _ = roc_curve(y_true, y_proba)
         roc_auc = auc(fpr, tpr)
         plt.figure()
@@ -146,7 +146,7 @@ class TabNetBreastCancerClassifier:
         
         return roc_auc
     
-    def find_optimal_threshold(self, model, X_val, y_val, plot=True, save_path="plots/threshold_f1.png"):
+    def find_optimal_threshold(self, model, X_val, y_val, plot=True, save_path="plots/tabnet/threshold_f1.png"):
         """
         Find optimal threshold using threshold-dependent metrics.
         Optimizes F1 score for production use.
@@ -192,12 +192,12 @@ class TabNetBreastCancerClassifier:
         importance_dict = dict(zip(feature_names, feature_importance))
         
         # Save to file
-        os.makedirs("artifacts", exist_ok=True)
-        with open("artifacts/feature_importance.json", "w") as f:
+        os.makedirs("artifacts/tabnet", exist_ok=True)
+        with open("artifacts/tabnet/feature_importance.json", "w") as f:
             json.dump(importance_dict, f, indent=2)
         
-        mlflow.log_artifact("artifacts/feature_importance.json")
-        
+        mlflow.log_artifact("artifacts/tabnet/feature_importance.json")
+        os.makedirs("plots/tabnet", exist_ok=True)
         # Plot feature importance
         plt.figure(figsize=(10, 6))
         sorted_idx = np.argsort(feature_importance)[::-1][:20]
@@ -206,10 +206,10 @@ class TabNetBreastCancerClassifier:
         plt.xlabel("Feature Importance")
         plt.title("Top 20 Feature Importances")
         plt.tight_layout()
-        plt.savefig("plots/feature_importance.png")
+        plt.savefig("plots/tabnet/feature_importance.png")
         plt.close()
         
-        mlflow.log_artifact("plots/feature_importance.png")
+        mlflow.log_artifact("plots/tabnet/feature_importance.png")
 
     def save_validation_metrics(self, y_test, y_test_pred, y_test_proba, X_train):
         """
@@ -248,17 +248,17 @@ class TabNetBreastCancerClassifier:
             }
         }
         
-        os.makedirs("artifacts", exist_ok=True)
-        with open('artifacts/validation_metrics.json', 'w') as f:
+        os.makedirs("artifacts/tabnet", exist_ok=True)
+        with open('artifacts/tabnet/validation_metrics.json', 'w') as f:
             json.dump(validation_metrics, f, indent=2)
         
         print("\n" + "="*60)
-        print("✅ Validation metrics saved to artifacts/validation_metrics.json")
+        print("✅ Validation metrics saved to artifacts/tabnet/validation_metrics.json")
         print("="*60)
         print(json.dumps(validation_metrics, indent=2))
         print("="*60 + "\n")
         
-        mlflow.log_artifact('artifacts/validation_metrics.json')
+        mlflow.log_artifact('artifacts/tabnet/validation_metrics.json')
         
         return validation_metrics
 
@@ -269,9 +269,9 @@ class TabNetBreastCancerClassifier:
         feature_means = X_train.mean(axis=0)
         feature_stds = X_train.std(axis=0)
         
-        os.makedirs("artifacts", exist_ok=True)
+        os.makedirs("artifacts/tabnet", exist_ok=True)
         np.savez(
-            'artifacts/feature_baseline.npz',
+            'artifacts/tabnet/feature_baseline.npz',
             means=feature_means,
             stds=feature_stds
         )
@@ -282,9 +282,9 @@ class TabNetBreastCancerClassifier:
         print(f"   Std range: [{feature_stds.min():.4f}, {feature_stds.max():.4f}]")
         print("="*60 + "\n")
         
-        mlflow.log_artifact('artifacts/feature_baseline.npz')
+        mlflow.log_artifact('artifacts/tabnet/feature_baseline.npz')
 
-    def export_to_onnx(self, model, X_sample, save_path="artifacts/tabnet.onnx"):
+    def export_to_onnx(self, model, X_sample, save_path="artifacts/tabnet/tabnet.onnx"):
         print("\n" + "=" * 60)
         print("📦 Exporting TabNet model to ONNX format...")
         print("=" * 60)
@@ -416,7 +416,7 @@ class TabNetBreastCancerClassifier:
                 self.best_model, X_val, y_val
             )
             mlflow.log_param("optimal_threshold", float(self.best_threshold))
-            mlflow.log_artifact("plots/threshold_f1.png")
+            mlflow.log_artifact("plots/tabnet/threshold_f1.png")
             
             # Final evaluation on TEST
             y_test_proba = self.best_model.predict_proba(X_test)[:, 1]
@@ -438,26 +438,26 @@ class TabNetBreastCancerClassifier:
             self.save_feature_baseline(X_train)
 
             # ===== SERIALIZE WITH ONNX =====
-            os.makedirs("artifacts", exist_ok=True)
+            os.makedirs("artifacts/tabnet", exist_ok=True)
             
             # Export to ONNX
             self.export_to_onnx(self.best_model, X_test)
             
             # Save TabNet model (PyTorch checkpoint as backup)
-            self.best_model.save_model("artifacts/tabnet_model")
+            self.best_model.save_model("artifacts/tabnet/tabnet_model")
             
             # Save threshold
-            with open("artifacts/threshold.json", "w") as f:
+            with open("artifacts/tabnet/threshold.json", "w") as f:
                 json.dump({"threshold": float(self.best_threshold)}, f)
-            mlflow.log_artifact("artifacts/threshold.json")
+            mlflow.log_artifact("artifacts/tabnet/threshold.json")
             
             # Save preprocessing pipeline
-            with open("artifacts/preprocessor.pkl", "wb") as f:
+            with open("artifacts/tabnet/preprocessor.pkl", "wb") as f:
                 pickle.dump(self.processor, f)
-            mlflow.log_artifact("artifacts/preprocessor.pkl")
+            mlflow.log_artifact("artifacts/tabnet/preprocessor.pkl")
             
             # Save metadata
-            with open("artifacts/metadata.json", "w") as f:
+            with open("artifacts/tabnet/metadata.json", "w") as f:
                 json.dump({
                     "n_features": self.n_features,
                     "model_type": "tabnet",
@@ -465,14 +465,14 @@ class TabNetBreastCancerClassifier:
                     "onnx_version": onnx.__version__,
                     "device": str(self.device)
                 }, f)
-            mlflow.log_artifact("artifacts/metadata.json")
+            mlflow.log_artifact("artifacts/tabnet/metadata.json")
 
             # Plot visualizations
             self.plot_roc_curve(y_test, y_test_proba)
-            mlflow.log_artifact("plots/roc_curve.png")
+            mlflow.log_artifact("plots/tabnet/roc_curve.png")
 
             self.plot_confusion_matrix(y_test, y_test_pred)
-            mlflow.log_artifact("plots/confusion_matrix.png")
+            mlflow.log_artifact("plots/tabnet/confusion_matrix.png")
             
             # Log PyTorch model to MLflow
             mlflow.pytorch.log_model(self.best_model.network, "pytorch_model")

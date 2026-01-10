@@ -136,7 +136,10 @@ metrics_tracker = ModelMetricsTracker(window_size=1000)
 # ========================================
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor.model.num_features()
+
+    EXPECTED_FEATURES = predictor.num_features 
+    
+    print(f"✅ Model loaded ({predictor.model_type}). Expects {EXPECTED_FEATURES} features")
     print(f"✅ Model loaded. Expects {EXPECTED_FEATURES} features")
     model_loaded.set(1)
     expected_features_gauge.set(EXPECTED_FEATURES)
