@@ -1,24 +1,24 @@
 {
-  "f1_score": 0.967741935483871,
+  "f1_score": 0.96875,
   "accuracy": 0.9767441860465116,
-  "precision": 1.0,
-  "recall": 0.9375,
-  "specificity": 1.0,
-  "roc_auc": 1.0,
-  "pr_auc": 1.0,
+  "precision": 0.96875,
+  "recall": 0.96875,
+  "specificity": 0.9814814814814815,
+  "roc_auc": 0.9994212962962963,
+  "pr_auc": 0.9990382339015151,
   "confusion_matrix": {
-    "tp": 30,
-    "tn": 54,
-    "fp": 0,
-    "fn": 2
+    "tp": 31,
+    "tn": 53,
+    "fp": 1,
+    "fn": 1
   },
   "model_info": {
     "algorithm": "XGBoost",
     "version": "1.0.0",
-    "training_date": "2026-01-10 18:30:04",
+    "training_date": "2026-01-10 18:55:34",
     "features": 31,
     "train_samples": 398,
     "test_samples": 86,
-    "threshold": 0.30999999999999994
+    "threshold": 0.22999999999999995
   }
 }
