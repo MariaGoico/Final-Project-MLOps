@@ -1,4 +1,4 @@
-# Base image with Python 3.13
+# Base image with Python 3.12
 FROM python:3.12-slim AS base
 
 # Recommended environment variables
@@ -8,11 +8,12 @@ ENV UV_SYSTEM_PYTHON=1
 
 WORKDIR /app
 
-# Intall the requiered dependencies of the system 
+# Install the required dependencies of the system 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libjpeg-dev \
     zlib1g-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv and the dependencies of the project
