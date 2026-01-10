@@ -13,9 +13,6 @@ import subprocess
 import os
 
 class RetrainingPipeline:
-    """
-    Simplified retraining workflow - always deploys
-    """
     
     def __init__(self, artifacts_dir="artifacts"):
         self.artifacts_dir = Path(artifacts_dir)
