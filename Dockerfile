@@ -35,6 +35,7 @@ COPY api/ ./api/
 COPY logic/ ./logic/
 
 COPY artifacts/ ./artifacts/
+COPY data/ ./data/
 
 # Expose the port associated with the API created with FastAPI
 EXPOSE 8000
