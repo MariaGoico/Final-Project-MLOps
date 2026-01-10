@@ -152,6 +152,7 @@ class RetrainingPipeline:
         try:
             import requests
             import base64
+            from datetime import datetime, timezone
             
             # ========================================
             # GET GITHUB CREDENTIALS
@@ -167,7 +168,7 @@ class RetrainingPipeline:
             
             headers = {
                 'Authorization': f'token {github_token}',
-                'Accept': 'application/vnd.github.v3+json'
+                'Accept':  'application/vnd.github.v3+json'
             }
             
             base_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}'
@@ -221,7 +222,7 @@ class RetrainingPipeline:
             tree_items = []
             
             for artifact_file in artifact_files: 
-                print(f"      - {artifact_file.name}.. .", end=" ")
+                print(f"      - {artifact_file.name}...", end=" ")
                 
                 try:
                     # Read and encode file
@@ -245,18 +246,18 @@ class RetrainingPipeline:
                     
                     # Add to tree
                     tree_items.append({
-                        'path':  f'artifacts/{artifact_file.name}',
-                        'mode': '100644',  # Regular file
+                        'path': f'artifacts/{artifact_file.name}',
+                        'mode': '100644',
                         'type': 'blob',
                         'sha': blob_sha
                     })
                     
                     print("✅")
                     
-                except Exception as e:
+                except Exception as e: 
                     print(f"❌ ({str(e)})")
             
-            if not tree_items:
+            if not tree_items: 
                 print("   ❌ No blobs created successfully")
                 return False
             
@@ -267,38 +268,41 @@ class RetrainingPipeline:
             tree_url = f'{base_url}/git/trees'
             tree_payload = {
                 'base_tree': base_tree_sha,
-                'tree': tree_items
+                'tree':  tree_items
             }
             
             tree_response = requests.post(tree_url, headers=headers, json=tree_payload)
             
             if tree_response.status_code != 201:
-                print(f"   ❌ Failed to create tree: {tree_response.json()}")
+                print(f"   ❌ Failed to create tree:  {tree_response.json()}")
                 return False
             
             new_tree_sha = tree_response.json()['sha']
-            print(f"   ✅ Tree created:  {new_tree_sha[:7]}")
+            print(f"   ✅ Tree created: {new_tree_sha[:7]}")
             
             # ========================================
             # CREATE COMMIT
             # ========================================
-            commit_message = f"Auto-retrain: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            print(f"   💬 Creating commit:  {commit_message}")
+            commit_message = f"🤖 Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            print(f"   💬 Creating commit: {commit_message}")
+            
+            # ⭐ FORMAT DATE FOR GITHUB API (ISO 8601 with UTC timezone)
+            commit_date = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             
             commit_url = f'{base_url}/git/commits'
             commit_payload = {
-                'message': commit_message,
+                'message':  commit_message,
                 'tree': new_tree_sha,
                 'parents': [current_commit_sha],
-                'author': {
+                'author':  {
                     'name': 'Retraining Bot',
                     'email': 'retraining-bot@render.com',
-                    'date': datetime.now().isoformat()
+                    'date': commit_date
                 },
-                'committer': {
+                'committer':  {
                     'name': 'Retraining Bot',
                     'email': 'retraining-bot@render.com',
-                    'date': datetime.now().isoformat()
+                    'date': commit_date
                 }
             }
             
@@ -350,7 +354,7 @@ class RetrainingPipeline:
             return False
         
         except Exception as e:
-            print(f"   ❌ GitHub API error: {e}")
+            print(f"   ❌ GitHub API error:  {e}")
             import traceback
             traceback.print_exc()
             return False
