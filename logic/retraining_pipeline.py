@@ -283,7 +283,7 @@ class RetrainingPipeline:
             # ========================================
             # CREATE COMMIT
             # ========================================
-            commit_message = f"🤖 Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            commit_message = f"Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             print(f"   💬 Creating commit: {commit_message}")
             
             # ⭐ FORMAT DATE FOR GITHUB API (ISO 8601 with UTC timezone)
