@@ -68,7 +68,7 @@ jobs:
           uv run python -m logic.xgboost_model
           
           echo "⚖️ Comparing models and promoting winner..."
-          uv run python -m logic.evaluator
+          uv run python -m logic.evaluate
       
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
