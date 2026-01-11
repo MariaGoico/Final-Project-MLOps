@@ -23,8 +23,9 @@ class RetrainingPipeline:
         """
         Simplified retraining pipeline: 
         1. Backup current model
-        2. Train with original data
-        3. ALWAYS deploy (no comparison)
+        2. Train BOTH models (TabNet & XGBoost)
+        3. Evaluate and promote the winner
+        4. ALWAYS deploy (no comparison with old prod model)
         
         Returns: 
             dict:  Retraining results
@@ -45,12 +46,12 @@ class RetrainingPipeline:
             self.backup_current_model()
             results['steps']['backup'] = 'success'
             
-            # ===== STEP 2: TRAIN =====
+            # ===== STEP 2: TRAIN & EVALUATE =====
             print("\n" + "="*60)
-            print("🏋️ STEP 2: Training new model with original data")
+            print("🏋️ STEP 2: Training new models and selecting winner")
             print("="*60)
             
-            new_model_metrics = self.train_new_model()
+            new_model_metrics = self.train_and_evaluate()
             results['steps']['training'] = {
                 'status': 'success',
                 'metrics': new_model_metrics
@@ -100,47 +101,69 @@ class RetrainingPipeline:
         else:
             print("⚠️ No existing model to backup")
     
-    def train_new_model(self):
-        """
-        Train new model with ORIGINAL data (data/data.csv)
-        """
-        print("🔄 Running training script with original data...")
-        print(f"   Using: data/data.csv")
-        
-        # Call training script
+    def _run_script(self, module_name):
+        """Helper to run a python module as a subprocess"""
+        print(f"   ▶️ Running {module_name}...")
         result = subprocess.run(
-            [sys.executable, "-m", "logic.model"],
+            [sys.executable, "-m", module_name],
             capture_output=True,
             text=True,
             cwd=str(Path.cwd())
         )
         
         if result.returncode != 0:
-            print(f"❌ Training output: {result.stdout}")
-            print(f"❌ Training error: {result.stderr}")
-            raise Exception(f"Training failed: {result.stderr}")
+            print(f"❌ Error running {module_name}")
+            print(f"❌ Output: {result.stdout}")
+            print(f"❌ Error: {result.stderr}")
+            raise Exception(f"Script {module_name} failed")
         
-        print("✅ Training completed successfully")
+        print(f"   ✅ {module_name} completed successfully")
+        return result.stdout
+
+    def train_and_evaluate(self):
+        """
+        Train both models and run evaluator to promote the best one.
+        """
+        print("🔄 Starting Multi-Model Training Pipeline...")
+        print(f"   Using data from: data/data.csv")
         
-        # Show last lines of output
-        if result.stdout:
-            output_lines = result.stdout.split('\n')
-            print("\n📤 Training output (last 10 lines):")
-            for line in output_lines[-10:]: 
-                if line.strip():
-                    print(f"   {line}")
+        # 1. Train TabNet
+        self._run_script("logic.tabnet_model")
+
+        # 2. Train XGBoost
+        self._run_script("logic.xgboost_model")
+
+        # 3. Evaluate and Select Winner
+        print("\n⚖️ Running Evaluator to select best model...")
+        eval_output = self._run_script("logic.evaluator")
         
-        # Load metrics
+        # Show evaluator output
+        print("\n📤 Evaluator Summary:")
+        for line in eval_output.split('\n'):
+            if "WINNER" in line or "ROC-AUC" in line:
+                print(f"   {line}")
+        
+        # 4. Load Metrics (from the winner, now in artifacts/)
         metrics_path = self.artifacts_dir / "validation_metrics.json"
+        summary_path = self.artifacts_dir / "evaluation_summary.json"
+        
+        metrics = {}
+        winner_info = "Unknown"
+
+        if summary_path.exists():
+            with open(summary_path) as f:
+                summary = json.load(f)
+                winner_info = summary.get("winner", "Unknown")
+
         if metrics_path.exists():
             with open(metrics_path) as f:
                 metrics = json.load(f)
-                print(f"\n📊 New model metrics:")
+                print(f"\n📊 Winner Model ({winner_info.upper()}) Metrics:")
                 print(f"   F1: {metrics.get('f1_score', 0):.4f}")
+                print(f"   ROC-AUC: {metrics.get('roc_auc', 0):.4f}")
                 print(f"   Accuracy: {metrics.get('accuracy', 0):.4f}")
-                return metrics
-        
-        return {}
+                
+        return metrics
     
     def deploy_new_model(self):
         """
@@ -182,7 +205,9 @@ class RetrainingPipeline:
                 print("   ❌ Artifacts directory not found")
                 return False
             
+            # Filter only files (GitHub API needs blobs), evaluator should have cleaned artifacts/
             artifact_files = [f for f in self.artifacts_dir.glob('*') if f.is_file()]
+            
             if not artifact_files:
                 print("   ⚠️ No artifact files to upload")
                 return False
@@ -338,9 +363,9 @@ class RetrainingPipeline:
             # ========================================
             print()
             print(f"   📊 Deployment Summary:")
-            print(f"      ✅ Files deployed: {len(tree_items)}")
+            print(f"     ✅ Files deployed: {len(tree_items)}")
             for item in tree_items:
-                print(f"         - {item['path']}")
+                print(f"          - {item['path']}")
             print(f"      📝 Commit:  {commit_message}")
             print(f"      🔗 SHA: {new_commit_sha[:7]}")
             print()
