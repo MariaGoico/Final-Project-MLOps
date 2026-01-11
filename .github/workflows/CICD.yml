@@ -6,17 +6,17 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-jobs: 
+jobs:
   build:
     runs-on: ubuntu-latest
-    steps: 
+    steps:
       - uses: actions/checkout@v3
-      - name:  Install packages
+      - name: Install packages
         run: make install
       - name: Format
         run: make format
       - name: Lint
-        run:  make lint
+        run: make lint
 
   train:
     runs-on: ubuntu-latest
@@ -24,14 +24,14 @@ jobs:
     if: "!contains(github.event.head_commit.message, 'Auto-retrain')"
     env:
       MLFLOW_DIR: ${{ github.workspace }}/mlruns
-    steps: 
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v3
       
-      - name:  Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version:  '3.12'
+          python-version: '3.12'
       
       - name: Install dependencies
         run: |
@@ -44,15 +44,24 @@ jobs:
           mkdir -p plots
           mkdir -p models
       
-      - name: Train model
+      - name: Train Models (TabNet & XGBoost)
         env:
           MLFLOW_TRACKING_URI: ${{ env.MLFLOW_DIR }}
         run: |
-          uv run python -m logic.model
+          echo "🚀 Starting TabNet Training..."
+          uv run python -m logic.tabnet_model
+          
+          echo "🚀 Starting XGBoost Training..."
+          uv run python -m logic.xgboost_model
       
-      - name:  Upload artifacts
+      - name: Evaluate and Promote Best Model
+        run: |
+          echo "⚖️ Comparing models and promoting winner..."
+          uv run python -m logic.evaluator
+      
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
-        with: 
+        with:
           name: model-artifacts
           path: |
             artifacts/
@@ -66,11 +75,11 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs:  train
+    needs: train
     if: "!contains(github.event.head_commit.message, 'Auto-retrain')"
     env:
-      DOCKER_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/mlops-finalproject:latest
-    steps: 
+      DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mlops-finalproject:latest
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -85,9 +94,20 @@ jobs:
       - name: Verify artifacts exist
         run: |
           echo "Checking required artifacts..."
-          test -f artifacts/model.json || (echo "❌ model.json not found" && exit 1)
+          # Check common artifacts
           test -f artifacts/preprocessor.pkl || (echo "❌ preprocessor.pkl not found" && exit 1)
           test -f artifacts/threshold.json || (echo "❌ threshold.json not found" && exit 1)
+          test -f artifacts/evaluation_summary.json || (echo "❌ evaluation_summary.json not found" && exit 1)
+          
+          # Check for model file (Supports both XGBoost JSON and TabNet ONNX)
+          if [ -f artifacts/model.json ]; then
+            echo "✅ XGBoost model found"
+          elif [ -f artifacts/tabnet.onnx ]; then
+            echo "✅ TabNet ONNX model found"
+          else
+             echo "❌ No valid model file (model.json or tabnet.onnx) found" && exit 1
+          fi
+          
           echo "✅ All required artifacts found"
       
       - name: Set up QEMU
@@ -98,7 +118,7 @@ jobs:
       
       - name: Login to DockerHub
         uses: docker/login-action@v3
-        with: 
+        with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       
@@ -107,22 +127,22 @@ jobs:
         with:
           context: .
           push: true
-          tags:  ${{ env.DOCKER_IMAGE }}
+          tags: ${{ env.DOCKER_IMAGE }}
           file: ./Dockerfile
       
-      - name:  Trigger Render Deploy
-        run:  curl -X POST "https://api.render.com/deploy/srv-d52ibj2li9vc73f8o800?key=${{ secrets.RENDER_DEPLOY_HOOK_KEY }}"
+      - name: Trigger Render Deploy
+        run: curl -X POST "https://api.render.com/deploy/srv-d52ibj2li9vc73f8o800?key=${{ secrets.RENDER_DEPLOY_HOOK_KEY }}"
 
   deploy-retrained:
     runs-on: ubuntu-latest
     if: "contains(github.event.head_commit.message, 'Auto-retrain')"
     env:
       DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mlops-finalproject:latest
-    steps: 
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name:  Verify artifacts exist (already in repo)
+      - name: Verify artifacts exist (already in repo)
         run: |
           echo "✅ Using artifacts from retraining commit"
           ls -lh artifacts/
@@ -133,21 +153,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name:  Login to DockerHub
+      - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password:  ${{ secrets.DOCKERHUB_TOKEN }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       
       - name: Build and push (with retrained model)
         uses: docker/build-push-action@v5
         with:
-          context: . 
+          context: .
           push: true
           tags: ${{ env.DOCKER_IMAGE }}
           file: ./Dockerfile
       
-      - name:  Trigger Render Deploy
+      - name: Trigger Render Deploy
         run: curl -X POST "https://api.render.com/deploy/srv-d52ibj2li9vc73f8o800?key=${{ secrets.RENDER_DEPLOY_HOOK_KEY }}"
 
   deploy-hf:
@@ -156,9 +176,9 @@ jobs:
     if: always() && (needs.deploy.result == 'success' || needs.deploy-retrained.result == 'success')
     steps:
       - name: Checkout repository with all branches
-        uses:  actions/checkout@v4
+        uses: actions/checkout@v4
         with:
-          fetch-depth:  0
+          fetch-depth: 0
           ref: main
       
       - name: Switch to hf-space branch
@@ -170,7 +190,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
-        run:  git remote add huggingface https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/mlops-finalproject.git
+        run: git remote add huggingface https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/mlops-finalproject.git
 
       - name: Push hf-space branch to Hugging Face
-        run:  git push huggingface hf-space:main --force
+        run: git push huggingface hf-space:main --force

@@ -65,7 +65,7 @@ class XGBoostBreastCancerClassifier:
 
         return X_train, X_val, X_test, y_train, y_val, y_test
 
-    def plot_confusion_matrix(self, y_true, y_pred, save_path="plots/confusion_matrix.png"):
+    def plot_confusion_matrix(self, y_true, y_pred, save_path="plots/xgboost/confusion_matrix.png"):
         cm = confusion_matrix(y_true, y_pred)
 
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
@@ -76,7 +76,7 @@ class XGBoostBreastCancerClassifier:
         plt.savefig(save_path)
         plt.close()
 
-    def plot_roc_curve(self, y_true, y_proba, save_path="plots/roc_curve.png"):
+    def plot_roc_curve(self, y_true, y_proba, save_path="plots/xgboost/roc_curve.png"):
         fpr, tpr, _ = roc_curve(y_true, y_proba)
         roc_auc = auc(fpr, tpr)
 
@@ -154,7 +154,7 @@ class XGBoostBreastCancerClassifier:
         # Return threshold-independent metric to optimize (ROC-AUC)
         return mean_roc_auc
     
-    def find_optimal_threshold(self, model, X_val, y_val, plot=True, save_path="plots/threshold_f1.png"):
+    def find_optimal_threshold(self, model, X_val, y_val, plot=True, save_path="plots/xgboost/threshold_f1.png"):
         """
         Find optimal threshold using threshold-dependent metrics.
         Optimizes F1 score for production use.
@@ -204,8 +204,9 @@ class XGBoostBreastCancerClassifier:
         # 1. Save Summary Plot (Global Importance)
         plt.figure(figsize=(10, 6))
         shap.summary_plot(shap_values, X_train, feature_names=feature_names, show=False)
-        os.makedirs("plots", exist_ok=True)
-        summary_plot_path = "plots/shap_summary.png"
+        os.makedirs("plots/xgboost", exist_ok=True)
+
+        summary_plot_path = "plots/xgboost/shap_summary.png"
         plt.tight_layout()
         plt.savefig(summary_plot_path)
         plt.close()
@@ -218,11 +219,11 @@ class XGBoostBreastCancerClassifier:
         mean_abs_shap = np.abs(shap_values).mean(axis=0)
         shap_summary = dict(zip(feature_names, mean_abs_shap.tolist()))
 
-        os.makedirs("artifacts", exist_ok=True)
-        with open("artifacts/shap_global.json", "w") as f:
+        os.makedirs("artifacts/xgboost", exist_ok=True)
+        with open("artifacts/xgboost/shap_global.json", "w") as f:
             json.dump(shap_summary, f, indent=2)
 
-        mlflow.log_artifact("artifacts/shap_global.json")
+        mlflow.log_artifact("artifacts/xgboost/shap_global.json")
 
     def save_validation_metrics(self, y_test, y_test_pred, y_test_proba, X_train):
         """
@@ -265,18 +266,18 @@ class XGBoostBreastCancerClassifier:
         }
         
         # Save validation metrics
-        os.makedirs("artifacts", exist_ok=True)
-        with open('artifacts/validation_metrics.json', 'w') as f:
+        os.makedirs("artifacts/xgboost", exist_ok=True)
+        with open('artifacts/xgboost/validation_metrics.json', 'w') as f:
             json.dump(validation_metrics, f, indent=2)
         
         print("\n" + "="*60)
-        print("✅ Validation metrics saved to artifacts/validation_metrics.json")
+        print("✅ Validation metrics saved to artifacts/xgboost/validation_metrics.json")
         print("="*60)
         print(json.dumps(validation_metrics, indent=2))
         print("="*60 + "\n")
         
         # Log to MLflow
-        mlflow.log_artifact('artifacts/validation_metrics.json')
+        mlflow.log_artifact('artifacts/xgboost/validation_metrics.json')
         
         return validation_metrics
 
@@ -300,9 +301,9 @@ class XGBoostBreastCancerClassifier:
             feature_names = [f"feature_{i}" for i in range(len(feature_means))]
         
         # Save as NPZ
-        os.makedirs("artifacts", exist_ok=True)
+        os.makedirs("artifacts/xgboost", exist_ok=True)
         np.savez(
-            'artifacts/feature_baseline.npz',
+            'artifacts/xgboost/feature_baseline.npz',
             means=feature_means,
             stds=feature_stds,
             feature_names=feature_names  # ← AÑADIDO
@@ -336,8 +337,7 @@ class XGBoostBreastCancerClassifier:
         print("📄 Human-readable baseline saved to artifacts/feature_baseline.json\n")
         
         # Log to MLflow
-        mlflow.log_artifact('artifacts/feature_baseline.npz')
-        mlflow.log_artifact('artifacts/feature_baseline.json')
+        mlflow.log_artifact('artifacts/xgboost/feature_baseline.npz')
 
     def train_and_optimize(self, n_trials=100):
         """
@@ -437,21 +437,21 @@ class XGBoostBreastCancerClassifier:
             self.save_feature_baseline(X_train)
 
            # SERIALIZE THE MODEL 
-            os.makedirs("artifacts", exist_ok=True)
+            os.makedirs("artifacts/xgboost", exist_ok=True)
 
             # Save XGBoost booster
-            self.best_model.save_model("artifacts/model.json")
+            self.best_model.save_model("artifacts/xgboost/model.json")
 
             # Save threshold
-            with open("artifacts/threshold.json", "w") as f:
+            with open("artifacts/xgboost/threshold.json", "w") as f:
                 json.dump({"threshold": float(self.best_threshold)}, f)
 
             # Save preprocessing pipeline
-            with open("artifacts/preprocessor.pkl", "wb") as f:
+            with open("artifacts/xgboost/preprocessor.pkl", "wb") as f:
                 pickle.dump(self.processor, f)
 
             # Optional metadata
-            with open("artifacts/metadata.json", "w") as f:
+            with open("artifacts/xgboost/metadata.json", "w") as f:
                 json.dump({
                     "n_features": self.n_features,
                     "model_type": "xgboost",
@@ -471,20 +471,12 @@ class XGBoostBreastCancerClassifier:
             
             # Log the best model
             mlflow.xgboost.log_model(self.best_model, "model")
-            
-            # Save threshold
-            os.makedirs('models', exist_ok=True)
-            threshold_dict = {'threshold': self.best_threshold}
-            with open('models/threshold.pkl', 'wb') as f:
-                pickle.dump(threshold_dict, f)
-                print('Saved threshold')
-            mlflow.log_artifact('models/threshold.pkl')
 
             self.plot_roc_curve(y_test, y_test_proba)
-            mlflow.log_artifact("plots/roc_curve.png")
+            mlflow.log_artifact("plots/xgboost/roc_curve.png")
 
             self.plot_confusion_matrix(y_test, y_test_pred)
-            mlflow.log_artifact("plots/confusion_matrix.png")
+            mlflow.log_artifact("plots/xgboost/confusion_matrix.png")
             
             print(f"\n{'='*60}")
             print(f"Training Complete!")

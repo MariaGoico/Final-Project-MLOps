@@ -240,8 +240,11 @@ print(f"🔍 Drift simulation: {'ENABLED' if ENABLE_DRIFT_SIMULATION else 'DISAB
 # ========================================
 try:
     predictor = BreastCancerPredictor("artifacts")
-    EXPECTED_FEATURES = predictor.model.num_features()
-    print(f"✅ Model loaded.  Expects {EXPECTED_FEATURES} features")
+
+    EXPECTED_FEATURES = predictor.num_features 
+    
+    print(f"✅ Model loaded ({predictor.model_type}). Expects {EXPECTED_FEATURES} features")
+    print(f"✅ Model loaded. Expects {EXPECTED_FEATURES} features")
     model_loaded.set(1)
     expected_features_gauge.set(EXPECTED_FEATURES)
     api_start_time.set(time.time())
