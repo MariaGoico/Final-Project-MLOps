@@ -14,6 +14,7 @@ import numpy as np
 from fastapi import FastAPI, File, Header, UploadFile, HTTPException, Request
 from logic.breast_cancer_predictor import BreastCancerPredictor
 from api.metrics_tracker import ModelMetricsTracker, prediction_confidence_by_diagnosis
+from logic.retrain import RetrainingPipeline  # <--- IMPORTANTE: Tu nueva clase de control remoto
 from io import StringIO
 import traceback
 import time
@@ -21,6 +22,7 @@ from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTEN
 from fastapi.responses import Response
 import json
 import logging
+import base64
 
 # Configurar logger
 logging.basicConfig(level=logging.INFO)
@@ -40,26 +42,26 @@ app = FastAPI(
 # ============================================
 retraining_lock = threading.Lock()
 retraining_in_progress = False
-last_retrain_time = None  # ⭐ AÑADIDO
-retraining_cooldown_minutes = 30  # ⭐ AÑADIDO
+last_retrain_time = None
+retraining_cooldown_minutes = 30
 
 retraining_status = {
     "status": "idle",
     "last_triggered": None,
-    "last_completed": None,
     "trigger_reason": None,
-    "deployed": None,
+    "github_response": None,
     "error": None
 }
 
 # ============================================
-# RETRAINING FUNCTION
+# RETRAINING FUNCTION (REMOTE TRIGGER)
 # ============================================
 def run_retraining(trigger_reason: str):
     """
-    Execute model retraining pipeline
+    Background task: Triggers GitHub Actions via API.
+    Does NOT train locally to avoid memory issues and missing dependencies (PyTorch).
     """
-    global retraining_in_progress, retraining_status, predictor
+    global retraining_in_progress, retraining_status
     
     with retraining_lock:
         if retraining_in_progress: 
@@ -67,60 +69,46 @@ def run_retraining(trigger_reason: str):
             return
         retraining_in_progress = True
     
-    retraining_status['status'] = 'in_progress'
-    retraining_status['error'] = None
-    
     try:
         logger.info(f"\n{'='*60}")
-        logger.info(f"🔄 STARTING RETRAINING PIPELINE")
-        logger.info(f"   Trigger:  {trigger_reason}")
+        logger.info(f"🔄 STARTING REMOTE RETRAINING TRIGGER")
+        logger.info(f"   Reason:  {trigger_reason}")
         logger.info(f"   Timestamp: {datetime.now()}")
         logger.info(f"{'='*60}\n")
         
-        # Import and run retraining pipeline
-        from logic.retraining_pipeline import RetrainingPipeline
+        # Instanciar el pipeline remoto (llama a GitHub)
+        pipeline = RetrainingPipeline()
+        result = pipeline.run(trigger_reason=trigger_reason)
         
-        pipeline = RetrainingPipeline(artifacts_dir="artifacts")
-        results = pipeline.run(trigger_reason)
-        
-        if results['success']:
-            # Check if new model was deployed
-            if results.get('deployed', False):
-                logger.info("✅ New model deployed via CI/CD")
-                logger.info("   Waiting for Render to redeploy with new artifacts...")
-                
-                retraining_status['status'] = 'completed'
-                retraining_status['deployed'] = True
-                retraining_status['deployment_method'] = 'cicd_triggered'
-                retraining_status['last_completed'] = datetime.now().isoformat()
-            else:
-                logger.info("⚠️ New model not deployed")
-                
-                retraining_status['status'] = 'completed'
-                retraining_status['deployed'] = False
-                retraining_status['last_completed'] = datetime.now().isoformat()
+        if result['success']:
+            logger.info("✅ GitHub Action triggered successfully")
+            logger.info("   The new model will be trained on GitHub and deployed automatically.")
             
-            retraining_status['results'] = results
-            
-            logger.info(f"\n{'='*60}")
-            logger.info(f"✅ RETRAINING SUCCESSFUL")
-            logger.info(f"   Deployed: {results.get('deployed', False)}")
-            logger.info(f"{'='*60}\n")
+            retraining_status.update({
+                "status": "github_triggered",
+                "last_completed": datetime.now().isoformat(),
+                "github_response": "success",
+                "error": None
+            })
         else:
-            raise Exception(f"Retraining failed: {results.get('error', 'Unknown error')}")
-        
+            logger.error(f"❌ Failed to trigger GitHub: {result.get('error')}")
+            retraining_status.update({
+                "status": "failed_trigger",
+                "github_response": "failed",
+                "error": result.get('error')
+            })
+
     except Exception as e: 
-        logger.error(f"\n{'='*60}")
-        logger.error(f"❌ RETRAINING FAILED")
-        logger.error(f"   Error: {str(e)}")
-        logger.error(f"{'='*60}\n")
+        logger.error(f"❌ CRITICAL ERROR IN RETRAINING THREAD: {str(e)}")
         logger.error(traceback.format_exc())
         
-        retraining_status['status'] = 'failed'
+        retraining_status['status'] = 'error'
         retraining_status['error'] = str(e)
     
     finally:
         retraining_in_progress = False
+        logger.info("🔄 Background thread finished.")
+
 
 # ========================================
 # PROMETHEUS METRICS
@@ -244,7 +232,6 @@ try:
     EXPECTED_FEATURES = predictor.num_features 
     
     print(f"✅ Model loaded ({predictor.model_type}). Expects {EXPECTED_FEATURES} features")
-    print(f"✅ Model loaded. Expects {EXPECTED_FEATURES} features")
     model_loaded.set(1)
     expected_features_gauge.set(EXPECTED_FEATURES)
     api_start_time.set(time.time())
@@ -447,7 +434,7 @@ async def info():
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     return {
-        "model_type": "XGBoost Classifier",
+        "model_type": predictor.model_type,
         "expected_features": EXPECTED_FEATURES,
         "threshold": float(predictor.threshold),
         "classes": {
@@ -543,7 +530,29 @@ async def predict(file: UploadFile = File(... )):
                 predictions_by_hour.labels(hour=str(current_hour)).inc()
                 
                 # Add to tracker (for ML metrics and drift)
-                metrics_tracker.add_prediction(pred, prob, row.values)
+                # Check for drift here!
+                drift_alert = metrics_tracker.add_prediction(pred, prob, row.values)
+                
+                # --- AUTO-RETRAINING TRIGGER (DRIFT) ---
+                if drift_alert and not retraining_in_progress:
+                    logger.warning("🚨 Concept Drift Detected by Tracker!")
+                    
+                    # Check cooldown
+                    can_trigger = True
+                    if last_retrain_time:
+                         cooldown = timedelta(minutes=retraining_cooldown_minutes)
+                         if (datetime.now() - last_retrain_time) < cooldown:
+                             can_trigger = False
+                    
+                    if can_trigger:
+                        trigger_msg = "Concept Drift Detected (Internal)"
+                        # Launch background thread
+                        thread = threading.Thread(
+                            target=run_retraining,
+                            args=(trigger_msg,),
+                            daemon=True
+                        )
+                        thread.start()
                 
                 predictions.append({
                     "row": int(i),
@@ -628,7 +637,6 @@ async def webhook_retrain(
     global retraining_in_progress, retraining_status, last_retrain_time
     
     # ===== AUTHENTICATION =====
-    import base64
     
     webhook_secret = os.environ.get("WEBHOOK_SECRET", "your-webhook-secret")
     expected_auth = "Basic " + base64.b64encode(f"admin:{webhook_secret}".encode()).decode()
@@ -639,7 +647,7 @@ async def webhook_retrain(
     
     try:
         payload = await request.json()
-        logger.info(f"📥 Webhook payload received: {json.dumps(payload, indent=2)}")
+        logger.info(f"📥 Webhook payload received (alerts)")
         
         # ===== EXTRACT ALERT INFO =====
         alerts = payload.get('alerts', [])
@@ -651,7 +659,7 @@ async def webhook_retrain(
         firing_alerts = [a for a in alerts if a.get('status') == 'firing']
         
         if not firing_alerts: 
-            logger.info(f"No firing alerts (found {len(alerts)} alerts with other status)")
+            logger.info(f"No firing alerts")
             return {"status": "ignored", "reason": "No firing alerts"}
         
         alert = firing_alerts[0]
@@ -685,28 +693,30 @@ async def webhook_retrain(
                 }
         
         # ===== TRIGGER RETRAINING =====
-        last_retrain_time = datetime.now()  # ⭐ ACTUALIZAR
+        last_retrain_time = datetime.now()
+        
+        # Create descriptive trigger message for GitHub
+        trigger_reason = f"Grafana Alert: {alert_name} (val={alert_value})"
         
         retraining_status['status'] = 'triggered'
         retraining_status['last_triggered'] = last_retrain_time.isoformat()
-        retraining_status['trigger_reason'] = alert_name
-        retraining_status['alert_value'] = str(alert_value)
+        retraining_status['trigger_reason'] = trigger_reason
         
-        # Start retraining in background thread
+        # Start remote trigger in background
         thread = threading.Thread(
             target=run_retraining,
-            args=(alert_name,),
+            args=(trigger_reason,), # Pass the descriptive string
             daemon=True
         )
         thread.start()
         
-        logger.info(f"✅ Retraining triggered by {alert_name}")
+        logger.info(f"✅ Remote retraining triggered for: {alert_name}")
         
         return {
             "status":  "retraining_triggered",
             "alert":  alert_name,
             "timestamp": retraining_status['last_triggered'],
-            "message": f"Automatic retraining started due to {alert_name}"
+            "message": f"GitHub Action triggered due to {alert_name}"
         }
     
     except json.JSONDecodeError as e:
@@ -729,22 +739,26 @@ async def retrain_status():
 @app.post("/retrain/manual")
 async def manual_retrain():
     """Manually trigger retraining (for testing)"""
-    global retraining_in_progress
+    global retraining_in_progress, last_retrain_time
     
     if retraining_in_progress: 
         raise HTTPException(status_code=409, detail="Retraining already in progress")
     
-    retraining_status['status'] = 'manual_trigger'
-    retraining_status['last_triggered'] = datetime.now().isoformat()
-    retraining_status['trigger_reason'] = 'Manual trigger'
+    last_retrain_time = datetime.now()
+    trigger_reason = 'Manual Admin Trigger'
     
-    thread = threading.Thread(target=run_retraining, args=("ManualTrigger",))
+    retraining_status['status'] = 'manual_trigger'
+    retraining_status['last_triggered'] = last_retrain_time.isoformat()
+    retraining_status['trigger_reason'] = trigger_reason
+    
+    thread = threading.Thread(target=run_retraining, args=(trigger_reason,))
     thread.daemon = True
     thread.start()
     
     return {
         "status": "retraining_started",
-        "timestamp": retraining_status['last_triggered']
+        "timestamp": retraining_status['last_triggered'],
+        "message": "GitHub Action trigger initiated"
     }
 
 # ========================================

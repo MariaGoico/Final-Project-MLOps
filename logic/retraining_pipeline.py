@@ -1,396 +1,68 @@
-"""
-Simplified Automated Retraining Pipeline
-Always trains and deploys without comparison
-"""
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import json
-import shutil
-from datetime import datetime
-import sys
-import subprocess
 import os
+import requests
+from datetime import datetime
 
 class RetrainingPipeline:
     
-    def __init__(self, artifacts_dir="artifacts"):
-        self.artifacts_dir = Path(artifacts_dir)
-        self.backup_dir = Path("artifacts_backup")
-        self.data_dir = Path("data")
+    def __init__(self):
+        self.github_token = os.environ.get('GITHUB_TOKEN')
+        self.repo_owner = os.environ.get('GITHUB_REPO_OWNER')
+        self.repo_name = os.environ.get('GITHUB_REPO_NAME')
+        self.workflow_id = 'cicd.yml'
+        self.ref = 'main'
         
-    def run(self, trigger_reason:  str):
+    def run(self, trigger_reason: str):
         """
-        Simplified retraining pipeline: 
-        1. Backup current model
-        2. Train BOTH models (TabNet & XGBoost)
-        3. Evaluate and promote the winner
-        4. ALWAYS deploy (no comparison with old prod model)
+        Triggers the CI/CD pipeline on GitHub Actions via API.
+        Instead of training locally (which requires heavy libs), we offload
+        the heavy lifting to GitHub Runners.
+        """
+        print(f"\n🚀 Triggering Remote Retraining on GitHub Actions...")
+        print(f"   Reason: {trigger_reason}")
         
-        Returns: 
-            dict:  Retraining results
-        """
-        results = {
-            'success': False,
-            'trigger_reason': trigger_reason,
-            'timestamp': datetime.now().isoformat(),
-            'steps':  {}
+        if not self.github_token:
+            print("❌ Error: GITHUB_TOKEN not found in environment variables.")
+            return {'success': False, 'error': 'Missing GITHUB_TOKEN'}
+
+        # Endpoint de GitHub para disparar workflows manualmente
+        url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/actions/workflows/{self.workflow_id}/dispatches"
+        
+        headers = {
+            "Authorization": f"token {self.github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        data = {
+            "ref": self.ref,
+            "inputs": {
+                "reason": trigger_reason  # Podrías usar esto en el yaml si quisieras
+            }
         }
         
         try:
-            # ===== STEP 1: BACKUP =====
-            print("\n" + "="*60)
-            print("📦 STEP 1: Backing up current model")
-            print("="*60)
+            response = requests.post(url, json=data, headers=headers)
             
-            self.backup_current_model()
-            results['steps']['backup'] = 'success'
-            
-            # ===== STEP 2: TRAIN & EVALUATE =====
-            print("\n" + "="*60)
-            print("🏋️ STEP 2: Training new models and selecting winner")
-            print("="*60)
-            
-            new_model_metrics = self.train_and_evaluate()
-            results['steps']['training'] = {
-                'status': 'success',
-                'metrics': new_model_metrics
-            }
-            
-            # ===== STEP 3: DEPLOY (ALWAYS) =====
-            print("\n" + "="*60)
-            print("🚀 STEP 3: Deploying new model (no comparison)")
-            print("="*60)
-            
-            deploy_success = self.deploy_new_model()
-            
-            if deploy_success:
-                results['deployed'] = True
-                results['success'] = True
-                print("✅ New model deployed successfully via CI/CD")
-            else:
-                results['deployed'] = False
-                results['success'] = False
-                results['error'] = "Deployment failed"
-            
-            return results
-            
-        except Exception as e:
-            print(f"\n❌ Retraining failed: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Restore backup on failure
-            try:
-                self.restore_backup()
-            except: 
-                pass
-            
-            results['success'] = False
-            results['error'] = str(e)
-            return results
-    
-    def backup_current_model(self):
-        """Backup current model artifacts"""
-        if self.artifacts_dir.exists():
-            if self.backup_dir.exists():
-                shutil.rmtree(self.backup_dir)
-            
-            shutil.copytree(self.artifacts_dir, self.backup_dir)
-            print(f"✅ Backed up to {self.backup_dir}")
-        else:
-            print("⚠️ No existing model to backup")
-    
-    def _run_script(self, module_name):
-        """Helper to run a python module as a subprocess"""
-        print(f"   ▶️ Running {module_name}...")
-        result = subprocess.run(
-            [sys.executable, "-m", module_name],
-            capture_output=True,
-            text=True,
-            cwd=str(Path.cwd())
-        )
-        
-        if result.returncode != 0:
-            print(f"❌ Error running {module_name}")
-            print(f"❌ Output: {result.stdout}")
-            print(f"❌ Error: {result.stderr}")
-            raise Exception(f"Script {module_name} failed")
-        
-        print(f"   ✅ {module_name} completed successfully")
-        return result.stdout
-
-    def train_and_evaluate(self):
-        """
-        Train both models and run evaluator to promote the best one.
-        """
-        print("🔄 Starting Multi-Model Training Pipeline...")
-        print(f"   Using data from: data/data.csv")
-        
-        # 1. Train TabNet
-        self._run_script("logic.tabnet_model")
-
-        # 2. Train XGBoost
-        self._run_script("logic.xgboost_model")
-
-        # 3. Evaluate and Select Winner
-        print("\n⚖️ Running Evaluator to select best model...")
-        eval_output = self._run_script("logic.evaluator")
-        
-        # Show evaluator output
-        print("\n📤 Evaluator Summary:")
-        for line in eval_output.split('\n'):
-            if "WINNER" in line or "ROC-AUC" in line:
-                print(f"   {line}")
-        
-        # 4. Load Metrics (from the winner, now in artifacts/)
-        metrics_path = self.artifacts_dir / "validation_metrics.json"
-        summary_path = self.artifacts_dir / "evaluation_summary.json"
-        
-        metrics = {}
-        winner_info = "Unknown"
-
-        if summary_path.exists():
-            with open(summary_path) as f:
-                summary = json.load(f)
-                winner_info = summary.get("winner", "Unknown")
-
-        if metrics_path.exists():
-            with open(metrics_path) as f:
-                metrics = json.load(f)
-                print(f"\n📊 Winner Model ({winner_info.upper()}) Metrics:")
-                print(f"   F1: {metrics.get('f1_score', 0):.4f}")
-                print(f"   ROC-AUC: {metrics.get('roc_auc', 0):.4f}")
-                print(f"   Accuracy: {metrics.get('accuracy', 0):.4f}")
-                
-        return metrics
-    
-    def deploy_new_model(self):
-        """
-        Deploy new model via GitHub API in a SINGLE commit
-        Uses Tree API + Commit API for atomic updates
-        """
-        print("📦 Deploying artifacts to GitHub via API...")
-        
-        try:
-            import requests
-            import base64
-            from datetime import datetime, timezone
-            
-            # ========================================
-            # GET GITHUB CREDENTIALS
-            # ========================================
-            github_token = os.environ.get('GITHUB_TOKEN')
-            if not github_token:
-                print("   ❌ GITHUB_TOKEN not found in environment")
-                return False
-            
-            repo_owner = os.environ.get('GITHUB_REPO_OWNER', 'MariaGoico')
-            repo_name = os.environ.get('GITHUB_REPO_NAME', 'Final-Project-MLOps')
-            branch = 'main'
-            
-            headers = {
-                'Authorization': f'token {github_token}',
-                'Accept':  'application/vnd.github.v3+json'
-            }
-            
-            base_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}'
-            
-            print(f"   🔗 Target: {repo_owner}/{repo_name} (branch: {branch})")
-            
-            # ========================================
-            # COLLECT ARTIFACT FILES
-            # ========================================
-            if not self.artifacts_dir.exists():
-                print("   ❌ Artifacts directory not found")
-                return False
-            
-            # Filter only files (GitHub API needs blobs), evaluator should have cleaned artifacts/
-            artifact_files = [f for f in self.artifacts_dir.glob('*') if f.is_file()]
-            
-            if not artifact_files:
-                print("   ⚠️ No artifact files to upload")
-                return False
-            
-            print(f"   📦 Found {len(artifact_files)} files to upload")
-            
-            # ========================================
-            # GET CURRENT COMMIT SHA
-            # ========================================
-            print("   🔍 Getting current commit SHA...")
-            ref_url = f'{base_url}/git/refs/heads/{branch}'
-            ref_response = requests.get(ref_url, headers=headers)
-            
-            if ref_response.status_code != 200:
-                print(f"   ❌ Failed to get branch ref: {ref_response.json()}")
-                return False
-            
-            current_commit_sha = ref_response.json()['object']['sha']
-            print(f"   ✅ Current commit:  {current_commit_sha[: 7]}")
-            
-            # ========================================
-            # GET BASE TREE SHA
-            # ========================================
-            commit_url = f'{base_url}/git/commits/{current_commit_sha}'
-            commit_response = requests.get(commit_url, headers=headers)
-            
-            if commit_response.status_code != 200:
-                print(f"   ❌ Failed to get commit: {commit_response.json()}")
-                return False
-            
-            base_tree_sha = commit_response.json()['tree']['sha']
-            
-            # ========================================
-            # CREATE BLOBS FOR EACH FILE
-            # ========================================
-            print("   📤 Creating blobs for artifacts...")
-            tree_items = []
-            
-            for artifact_file in artifact_files: 
-                print(f"      - {artifact_file.name}...", end=" ")
-                
-                try:
-                    # Read and encode file
-                    with open(artifact_file, 'rb') as f:
-                        content = base64.b64encode(f.read()).decode('utf-8')
-                    
-                    # Create blob
-                    blob_url = f'{base_url}/git/blobs'
-                    blob_payload = {
-                        'content':  content,
-                        'encoding':  'base64'
-                    }
-                    
-                    blob_response = requests.post(blob_url, headers=headers, json=blob_payload)
-                    
-                    if blob_response.status_code != 201:
-                        print(f"❌ ({blob_response.status_code})")
-                        continue
-                    
-                    blob_sha = blob_response.json()['sha']
-                    
-                    # Add to tree
-                    tree_items.append({
-                        'path': f'artifacts/{artifact_file.name}',
-                        'mode': '100644',
-                        'type': 'blob',
-                        'sha': blob_sha
-                    })
-                    
-                    print("✅")
-                    
-                except Exception as e: 
-                    print(f"❌ ({str(e)})")
-            
-            if not tree_items: 
-                print("   ❌ No blobs created successfully")
-                return False
-            
-            # ========================================
-            # CREATE NEW TREE
-            # ========================================
-            print(f"   🌳 Creating tree with {len(tree_items)} files...")
-            tree_url = f'{base_url}/git/trees'
-            tree_payload = {
-                'base_tree': base_tree_sha,
-                'tree':  tree_items
-            }
-            
-            tree_response = requests.post(tree_url, headers=headers, json=tree_payload)
-            
-            if tree_response.status_code != 201:
-                print(f"   ❌ Failed to create tree:  {tree_response.json()}")
-                return False
-            
-            new_tree_sha = tree_response.json()['sha']
-            print(f"   ✅ Tree created: {new_tree_sha[:7]}")
-            
-            # ========================================
-            # CREATE COMMIT
-            # ========================================
-            commit_message = f"Auto-retrain:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            print(f"   💬 Creating commit: {commit_message}")
-            
-            # ⭐ FORMAT DATE FOR GITHUB API (ISO 8601 with UTC timezone)
-            commit_date = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            commit_url = f'{base_url}/git/commits'
-            commit_payload = {
-                'message':  commit_message,
-                'tree': new_tree_sha,
-                'parents': [current_commit_sha],
-                'author':  {
-                    'name': 'Retraining Bot',
-                    'email': 'retraining-bot@render.com',
-                    'date': commit_date
-                },
-                'committer':  {
-                    'name': 'Retraining Bot',
-                    'email': 'retraining-bot@render.com',
-                    'date': commit_date
+            if response.status_code == 204:
+                print("✅ Successfully triggered GitHub Action!")
+                print("   The new model will be trained and deployed automatically.")
+                return {
+                    'success': True, 
+                    'message': 'GitHub Action triggered successfully',
+                    'timestamp': datetime.now().isoformat()
                 }
-            }
-            
-            commit_response = requests.post(commit_url, headers=headers, json=commit_payload)
-            
-            if commit_response.status_code != 201:
-                print(f"   ❌ Failed to create commit: {commit_response.json()}")
-                return False
-            
-            new_commit_sha = commit_response.json()['sha']
-            print(f"   ✅ Commit created: {new_commit_sha[:7]}")
-            
-            # ========================================
-            # UPDATE BRANCH REFERENCE
-            # ========================================
-            print(f"   🔄 Updating {branch} branch...")
-            update_ref_url = f'{base_url}/git/refs/heads/{branch}'
-            update_payload = {
-                'sha': new_commit_sha,
-                'force': False
-            }
-            
-            update_response = requests.patch(update_ref_url, headers=headers, json=update_payload)
-            
-            if update_response.status_code != 200:
-                print(f"   ❌ Failed to update branch: {update_response.json()}")
-                return False
-            
-            print(f"   ✅ Branch updated successfully")
-            
-            # ========================================
-            # SUMMARY
-            # ========================================
-            print()
-            print(f"   📊 Deployment Summary:")
-            print(f"     ✅ Files deployed: {len(tree_items)}")
-            for item in tree_items:
-                print(f"          - {item['path']}")
-            print(f"      📝 Commit:  {commit_message}")
-            print(f"      🔗 SHA: {new_commit_sha[:7]}")
-            print()
-            print("   ✅ All artifacts pushed to GitHub in a SINGLE commit")
-            print("   🔄 CI/CD pipeline will trigger automatically")
-            
-            return True
-            
-        except ImportError:
-            print("   ❌ 'requests' library not available")
-            return False
-        
+            else:
+                print(f"❌ Failed to trigger GitHub Action. Status: {response.status_code}")
+                print(f"   Response: {response.text}")
+                return {
+                    'success': False, 
+                    'error': f"GitHub API Error: {response.text}"
+                }
+                
         except Exception as e:
-            print(f"   ❌ GitHub API error:  {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    def restore_backup(self):
-        """Restore previous model from backup"""
-        if self.backup_dir.exists():
-            if self.artifacts_dir.exists():
-                shutil.rmtree(self.artifacts_dir)
-            
-            shutil.copytree(self.backup_dir, self.artifacts_dir)
-            print(f"✅ Restored from {self.backup_dir}")
-        else:
-            print("⚠️ No backup found to restore")
+            print(f"❌ Exception calling GitHub API: {e}")
+            return {'success': False, 'error': str(e)}
+
+# Para pruebas locales
+if __name__ == "__main__":
+    pipeline = RetrainingPipeline()
+    pipeline.run("Manual Test")
