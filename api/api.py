@@ -14,7 +14,7 @@ import numpy as np
 from fastapi import FastAPI, File, Header, UploadFile, HTTPException, Request
 from logic.breast_cancer_predictor import BreastCancerPredictor
 from api.metrics_tracker import ModelMetricsTracker, prediction_confidence_by_diagnosis
-from logic.retrain import RetrainingPipeline  # <--- IMPORTANTE: Tu nueva clase de control remoto
+from logic.retraining_pipeline import RetrainingPipeline  # <--- IMPORTANTE: Tu nueva clase de control remoto
 from io import StringIO
 import traceback
 import time
