@@ -57,7 +57,7 @@ jobs:
       - name: Evaluate and Promote Best Model
         run: |
           echo "⚖️ Comparing models and promoting winner..."
-          uv run python -m logic.evaluator
+          uv run python -m logic.evaluate
       
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
