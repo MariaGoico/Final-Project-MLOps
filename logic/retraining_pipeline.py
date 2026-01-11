@@ -8,7 +8,7 @@ class RetrainingPipeline:
         self.github_token = os.environ.get('GITHUB_TOKEN')
         self.repo_owner = os.environ.get('GITHUB_REPO_OWNER')
         self.repo_name = os.environ.get('GITHUB_REPO_NAME')
-        self.workflow_id = 'cicd.yml'
+        self.workflow_id = 'CICD.yml'
         self.ref = 'main'
         
     def run(self, trigger_reason: str):
