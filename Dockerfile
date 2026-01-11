@@ -8,37 +8,37 @@ ENV UV_SYSTEM_PYTHON=1
 
 WORKDIR /app
 
-# Install the required dependencies of the system 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libjpeg-dev \
     zlib1g-dev \
     git \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv and the dependencies of the project
+# Install uv and dependencies
 FROM base AS builder
-# Install uv
 RUN pip install --no-cache-dir uv
-# Copy the dependencies file
+
+# Copy dependency definition
 COPY pyproject.toml .
-# Copy the lock file if exists
+# Copy lock file if exists
 COPY uv.lock* .
-# Install the dependencies of the project in the system's environment
+
 RUN uv pip install --system --no-cache .
 
-# Copy the source code and prepare the execution environment
+# Prepare runtime environment
 FROM base AS runtime
-# Copy the installed dependencies
+
+# Copy libraries from builder
 COPY --from=builder /usr/local /usr/local
-# Copy your application code
+
+# Copy application code
 COPY api/ ./api/
 COPY logic/ ./logic/
 
+# Copy artifacts (Modelos generados por GitHub Actions)
 COPY artifacts/ ./artifacts/
-COPY data/ ./data/
 
-# Expose the port associated with the API created with FastAPI
 EXPOSE 8000
-# Default command: it starts the API with uvicorn
 CMD ["sh", "-c", "uvicorn api.api:app --host 0.0.0.0 --port ${PORT}"]

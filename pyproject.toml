@@ -1,40 +1,61 @@
 [project]
 name = "final-project-mlops"
 version = "0.1.0"
-description = "Add your description here"
+description = "MLOps Pipeline for Breast Cancer Prediction"
 readme = "README.md"
 requires-python = ">=3.11"
+
 dependencies = [
-    "black>=25.11.0",
-    "click>=8.1.0",
     "fastapi>=0.121.2",
+    "uvicorn>=0.38.0",
+    "python-multipart>=0.0.20",
     "httpx>=0.28.1",
-    "jinja2>=3.1.6",
-    "mlflow>=3.6.0",
-    "onnx>=1.20.0",
-    "onnxconverter-common>=1.16.0",
-    "onnxmltools>=1.14.0",
+    "requests>=2.32.0",
+    
+    # Procesamiento de datos (Necesarios para cargar pickles)
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "scikit-learn>=1.4.0",
+    
+    # Motores de Inferencia (Sin PyTorch pesado)
+    "xgboost>=3.1.2",
     "onnxruntime>=1.23.2",
-    "onnxscript>=0.5.6",
-    "optuna>=4.6.0",
-    "optuna-integration>=4.6.0",
-    "pillow>=12.0.0",
-    "prometheus-client>=0.23.1",
+    
+    # Monitoreo
+    "prometheus-client>=0.23.1"
+]
+
+[dependency-groups]
+dev = [
+    # Testing y Calidad
+    "black>=25.11.0",
     "pylint>=4.0.3",
     "pytest>=9.0.1",
     "pytest-cov>=7.0.0",
-    "python-multipart>=0.0.20",
-    "requests>=2.32.0",
-    "pytorch-tabnet>=4.1.0",
-    "seaborn>=0.13.2",
-    "shap>=0.49.1",
-    "skl2onnx>=1.19.1",
+    "click>=8.1.0",
+    
+    # ML Pesado (Entrenamiento)
     "torch>=2.9.1",
-    "uvicorn>=0.38.0",
-    "xgboost>=3.1.2",
+    "pytorch-tabnet>=4.1.0",
+    "mlflow>=3.6.0",
+    "optuna>=4.6.0",
+    "optuna-integration>=4.6.0",
+    "shap>=0.49.1",
+    "seaborn>=0.13.2",
+    "jinja2>=3.1.6",
+    
+    # Conversión a ONNX
+    "onnx>=1.20.0",
+    "onnxconverter-common>=1.16.0",
+    "onnxmltools>=1.14.0",
+    "onnxscript>=0.5.6",
+    "skl2onnx>=1.19.1",
+    "pillow>=12.0.0"
 ]
 
 [tool.coverage.run]
-omit = ["logic/train.py",
-        "__init__.py",
-        "logic/select_best_model.py"]
+omit = [
+    "logic/train.py",
+    "__init__.py",
+    "logic/select_best_model.py"
+]
