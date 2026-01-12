@@ -1,4 +1,6 @@
 # Breast Cancer Prediction — MLOps Final Project
+[![CICD](https://github.com/MariaGoico/Final-Project-MLOps/actions/workflows/CICD.yml/badge.svg)](https://github.com/MariaGoico/Final-Project-MLOps/actions/workflows/CICD.yml)
+
 **Authors:** Maria Goicoechea, Paula Pina & Joaquín Orradre
 
 This project demonstrates the end-to-end development and deployment of a machine learning system for breast cancer diagnosis prediction. Leveraging the Wisconsin Breast Cancer dataset, the goal is to provide accurate predictions, robust monitoring, automated retraining, and a seamless user experience through modern MLOps practices.
@@ -15,18 +17,57 @@ This project demonstrates the end-to-end development and deployment of a machine
 ## Project Structure
 
 ```
-.
-├── api/                   # FastAPI application and endpoints
-├── notebooks/             # Jupyter Notebooks (experimentation, EDA, etc.)
-├── logic/                 # Model training, evaluation, and comparison logic
-├── models/                # Trained models and artifacts
-├── mlops/                 # CI/CD, monitoring, retraining scripts
-├── hf-space/              # Gradio (Hugging Face Spaces) UI code
-├── artifacts/             # Model artifacts and baselines
-├── prometheus.yml         # Prometheus configuration
-├── .github/workflows/     # GitHub Actions workflows (CI/CD & retraining)
-├── requirements.txt
-└── README.md
+├── .github/workflows/              
+│   ├── CICD.yml                    # Main workflow for continuous integration and deployment
+
+├── api/                            # FastAPI app and monitoring logic
+│   ├── __init__.py                 
+│   ├── api.py                      # Main API server (FastAPI)
+│   ├── metrics_tracker.py          # Tracks and serves application/model metrics
+
+├── artifacts/                      # Model artifacts and baseline data for serving/monitoring
+│   ├── feature_baseline.json       
+│   ├── feature_baseline.npz       
+│   ├── metadata.json              
+│   ├── model.json                 
+│   ├── preprocessor.pkl 
+│   ├── shap_global.json    
+│   ├── threshold.json 
+│   ├── validation_metrics.json 
+
+├── data/
+│   ├── data.csv                    # Main source data (Wisconsin Breast Cancer)
+
+├── logic/                          # Core ML logic: training, evaluation, selection
+│   ├── __init__.py                 
+│   ├── breast_cancer_predictor.py  # Model loading, prediction code
+│   ├── data_module.py              # Data processing routines and helpers
+│   ├── evaluate.py                 # Model evaluation and comparison
+│   ├── generate_baseline.py        
+│   ├── retraining_pipeline.py      # Automated retraining triggering logic
+│   ├── tabnet_model.py             # TabNet training pipeline
+│   ├── utilities.py                
+│   ├── xgboost_model.py            # XGBoost training pipeline
+
+├── monitoring/
+│   ├── .dockerignore               
+│   ├── Dockerfile                  
+
+├── notebooks/
+│   ├── EDA.ipynb                   # Exploratory Data Analysis notebook
+
+├── templates/
+│   ├── home.html                   # HTML template used by API
+
+├── tests/                          # Automated test suite
+│   ├── __init__.py                 
+│   ├── test_data_module.py         
+│   ├── test_model.py               
+│   ├── test_predictor.py           
+│   ├── test_utilities.py           
+
+├── Dockerfile                      # Main project Docker config (for the API/app)
+├── Makefile                        # Automation: install, format, lint, test, all                     
 ```
 ## Setup and Installation
 
