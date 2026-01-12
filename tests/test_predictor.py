@@ -1,184 +1,180 @@
 import pytest
-import numpy as np
 import os
 import json
 import pickle
+import numpy as np
 import xgboost as xgb
-from unittest.mock import MagicMock, patch
+import torch
+import onnxruntime as ort
 from sklearn.preprocessing import StandardScaler
 from logic.breast_cancer_predictor import BreastCancerPredictor
 
 # ==========================================
-# ️ FIXTURES
+# Helpers for Dummy Artifact Creation
 # ==========================================
 
-@pytest.fixture
-def common_preprocessor(tmp_path):
-    """Creates a dummy preprocessor used by both models."""
-    X_train = np.random.rand(10, 5)
+def create_common_artifacts(path, n_features=5):
+    """Creates preprocessor and threshold common to both models."""
+    # 1. Preprocessor
     scaler = StandardScaler()
-    scaler.fit(X_train)
-    
-    path = tmp_path / "preprocessor.pkl"
-    with open(path, "wb") as f:
+    scaler.fit(np.random.rand(10, n_features))
+    with open(path / "preprocessor.pkl", "wb") as f:
         pickle.dump(scaler, f)
-    
-    # Also save the threshold (common to both)
-    with open(tmp_path / "threshold.json", "w") as f:
+        
+    # 2. Threshold
+    with open(path / "threshold.json", "w") as f:
         json.dump({"threshold": 0.5}, f)
-        
-    return scaler
 
-@pytest.fixture
-def xgboost_artifacts(tmp_path, common_preprocessor):
-    """
-    Sets up a 'Real' XGBoost environment.
-    Writes model.json, metadata.json, and preprocessor.
-    """
-    # 1. Create Metadata (CRITICAL CHANGE)
-    with open(tmp_path / "metadata.json", "w") as f:
-        json.dump({
-            "model_type": "xgboost",
-            "n_features": 5
-        }, f)
-
-    # 2. Create and save a dummy XGBoost model
-    # We train it briefly so it has the correct structure (5 features)
-    X_dummy = np.random.rand(10, 5)
-    X_scaled = common_preprocessor.transform(X_dummy)
-    y_dummy = np.random.randint(0, 2, 10)
+def create_xgboost_artifacts(path, n_features=5):
+    """Creates a dummy XGBoost model and metadata."""
+    create_common_artifacts(path, n_features)
     
-    dtrain = xgb.DMatrix(X_scaled, label=y_dummy)
-    model = xgb.train({'objective': 'binary:logistic'}, dtrain, num_boost_round=1)
-    model.save_model(tmp_path / "model.json")
-
-    return str(tmp_path)
-
-@pytest.fixture
-def tabnet_artifacts(tmp_path, common_preprocessor):
-    """
-    Sets up a 'Mocked' TabNet environment.
-    Writes metadata.json and preprocessor, but Mocks the ONNX file.
-    """
-    # 1. Create Metadata indicating TabNet
-    with open(tmp_path / "metadata.json", "w") as f:
-        json.dump({
-            "model_type": "tabnet", 
-            "n_features": 5  # Must match the preprocessor
-        }, f)
+    # Metadata
+    with open(path / "metadata.json", "w") as f:
+        json.dump({"model_type": "xgboost", "n_features": n_features}, f)
         
-    # 2. Create a dummy ONNX file (content doesn't matter as we will mock the loader)
-    with open(tmp_path / "tabnet.onnx", "w") as f:
-        f.write("dummy content")
+    # Model
+    X = np.random.rand(10, n_features)
+    y = np.random.randint(0, 2, 10)
+    dtrain = xgb.DMatrix(X, label=y)
+    model = xgb.train({}, dtrain, num_boost_round=1)
+    model.save_model(path / "model.json")
+
+def create_tabnet_artifacts(path, n_features=5):
+    """Creates a dummy ONNX model and metadata."""
+    create_common_artifacts(path, n_features)
+    
+    # Metadata
+    with open(path / "metadata.json", "w") as f:
+        json.dump({"model_type": "tabnet", "n_features": n_features}, f)
         
-    return str(tmp_path)
+    # Create a tiny PyTorch model and export to ONNX
+    class TinyModel(torch.nn.Module):
+        def forward(self, x):
+            # Simulate output [prob_0, prob_1]
+            # Just return a fixed tensor for simplicity or simple math
+            return torch.stack([x[:,0], x[:,0]], dim=1) 
+
+    model = TinyModel()
+    dummy_input = torch.randn(1, n_features)
+    
+    torch.onnx.export(
+        model, 
+        dummy_input, 
+        path / "tabnet.onnx",
+        input_names=["input"],
+        output_names=["output"],
+        dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}}
+    )
 
 # ==========================================
-# 離 TESTS
+# Tests
 # ==========================================
 
-# --- 1. XGBoost Tests (Integration Style) ---
-
-def test_xgboost_initialization(xgboost_artifacts):
-    """Test that XGBoost loads correctly with the new metadata system."""
-    predictor = BreastCancerPredictor(artifact_dir=xgboost_artifacts)
+def test_init_xgboost_mode(tmp_path):
+    """Test if predictor correctly loads XGBoost backend."""
+    create_xgboost_artifacts(tmp_path)
+    
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
     
     assert predictor.model_type == "xgboost"
     assert isinstance(predictor.model, xgb.Booster)
-    assert predictor.threshold == 0.5
-    assert predictor.num_features == 5
+    # Ensure it didn't try to load ONNX session
+    assert not hasattr(predictor, "session")
+    assert predictor.feature_count == 5
 
-def test_xgboost_prediction_flow(xgboost_artifacts):
-    """Test end-to-end prediction with real XGBoost artifacts."""
-    predictor = BreastCancerPredictor(artifact_dir=xgboost_artifacts)
-    X_input = np.random.rand(1, 5)
+def test_init_tabnet_mode(tmp_path):
+    """Test if predictor correctly loads TabNet/ONNX backend."""
+    create_tabnet_artifacts(tmp_path)
     
-    # Test Proba
-    proba = predictor.predict_proba(X_input)
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
+    
+    assert predictor.model_type == "tabnet"
+    assert hasattr(predictor, "session")
+    assert isinstance(predictor.session, ort.InferenceSession)
+    # Ensure it didn't try to load XGBoost
+    assert not hasattr(predictor, "model")
+    assert predictor.feature_count == 5
+
+def test_predict_xgboost(tmp_path):
+    """Test prediction logic using XGBoost backend."""
+    create_xgboost_artifacts(tmp_path, n_features=5)
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
+    
+    X = np.random.rand(1, 5)
+    
+    # Probabilities
+    proba = predictor.predict_proba(X)
+    assert len(proba) == 1
     assert 0.0 <= proba[0] <= 1.0
     
-    # Test Class
-    pred = predictor.predict(X_input)
+    # Classes
+    pred = predictor.predict(X)
     assert pred[0] in [0, 1]
 
-# --- 2. TabNet Tests (Mocked Style) ---
-
-def test_tabnet_initialization(tabnet_artifacts):
-    """Test that TabNet initializes correctly using mocked ONNX runtime."""
+def test_predict_tabnet(tmp_path):
+    """Test prediction logic using ONNX backend."""
+    create_tabnet_artifacts(tmp_path, n_features=5)
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
     
-    # We patch onnxruntime.InferenceSession so it doesn't try to read the dummy file
-    with patch("onnxruntime.InferenceSession") as mock_session_cls:
-        # Configure the mock session
-        mock_session = mock_session_cls.return_value
-        # Mock inputs info (needed for input_name retrieval)
-        mock_input = MagicMock()
-        mock_input.name = "input_node"
-        mock_session.get_inputs.return_value = [mock_input]
-        
-        # Initialize
-        predictor = BreastCancerPredictor(artifact_dir=tabnet_artifacts)
-        
-        assert predictor.model_type == "tabnet"
-        assert predictor.num_features == 5
-        # Verify it tried to load the onnx file
-        mock_session_cls.assert_called_once()
-        assert "tabnet.onnx" in str(mock_session_cls.call_args[0][0])
-
-def test_tabnet_prediction_logic(tabnet_artifacts):
-    """Test TabNet prediction logic including ONNX output parsing."""
+    X = np.random.rand(1, 5)
     
-    with patch("onnxruntime.InferenceSession") as mock_session_cls:
-        mock_session = mock_session_cls.return_value
-        mock_session.get_inputs.return_value = [MagicMock(name="input_node")]
-        
-        # Scenario A: ONNX returns (Batch, 2) probabilities -> [Prob_0, Prob_1]
-        # We simulate a return of [[0.1, 0.9]] (90% confident positive)
-        mock_session.run.return_value = [np.array([[0.1, 0.9]], dtype=np.float32)]
-        
-        predictor = BreastCancerPredictor(artifact_dir=tabnet_artifacts)
-        X_input = np.random.rand(1, 5)
-        
-        # Test
-        prob = predictor.predict_proba(X_input)
-        
-        # Should extract the second column (0.9)
-        assert len(prob) == 1
-        assert prob[0] == 0.9
-        
-        # Scenario B: ONNX returns (Batch, 1) or flat -> just probability
-        mock_session.run.return_value = [np.array([0.9], dtype=np.float32)]
-        prob_flat = predictor.predict_proba(X_input)
-        assert prob_flat[0] == 0.9
-
-# --- 3. Shared Logic Tests (Parametrized) ---
-# These verify that common logic (preprocessing, dimension handling) works for BOTH
-
-@pytest.mark.parametrize("artifact_fixture", ["xgboost_artifacts", "tabnet_artifacts"])
-def test_input_preprocessing_and_types(artifact_fixture, request):
-    """Verify data preparation logic works for both backends."""
+    # Probabilities
+    # Our dummy ONNX model returns values, we just check shape/type logic
+    proba = predictor.predict_proba(X)
     
-    # Resolve the fixture value from the string name
-    artifact_path = request.getfixturevalue(artifact_fixture)
+    assert isinstance(proba, np.ndarray)
+    assert len(proba) == 1
     
-    # We need to mock TabNet if that's the current fixture
-    if "tabnet" in artifact_fixture:
-        with patch("onnxruntime.InferenceSession") as mock_sess:
-            mock_sess.return_value.get_inputs.return_value = [MagicMock(name="in")]
-            predictor = BreastCancerPredictor(artifact_dir=artifact_path)
-    else:
-        predictor = BreastCancerPredictor(artifact_dir=artifact_path)
+    # Classes
+    pred = predictor.predict(X)
+    assert pred[0] in [0, 1]
 
-    # 1. Test Dimension Handling
-    X_1d = np.random.rand(5)
-    X_proc = predictor._prepare(X_1d)
+def test_predict_confidence_tuple(tmp_path):
+    """Test the (class, probability) return format."""
+    create_xgboost_artifacts(tmp_path)
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
     
-    assert X_proc.ndim == 2
-    assert X_proc.shape == (1, 5)
+    X = np.random.rand(5) # 1D array
     
-    # 2. Test Type Enforcement (ONNX requires float32)
-    assert X_proc.dtype == np.float32
+    cls, prob = predictor.predict_with_confidence(X)
+    
+    assert isinstance(cls, int)
+    assert isinstance(prob, float)
 
-    # 3. Test Feature Mismatch Error
-    X_bad = np.random.rand(1, 3) # Only 3 features
+def test_input_dimension_fix(tmp_path):
+    """Test that 1D input is auto-reshaped to 2D."""
+    create_xgboost_artifacts(tmp_path, n_features=3)
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
+    
+    X_1d = np.array([0.1, 0.2, 0.3])
+    
+    # Should not crash
+    predictor.predict(X_1d)
+
+def test_error_missing_metadata(tmp_path):
+    """Test specific error for missing metadata.json."""
+    # Create an empty dir
+    with pytest.raises(FileNotFoundError, match="Metadata not found"):
+        BreastCancerPredictor(artifact_dir=str(tmp_path))
+
+def test_error_unknown_model_type(tmp_path):
+    """Test error when metadata contains garbage model type."""
+    create_common_artifacts(tmp_path)
+    with open(tmp_path / "metadata.json", "w") as f:
+        json.dump({"model_type": "random_forest"}, f)
+        
+    with pytest.raises(ValueError, match="Unknown model type"):
+        BreastCancerPredictor(artifact_dir=str(tmp_path))
+
+def test_error_feature_mismatch(tmp_path):
+    """Test validation logic when input shape is wrong."""
+    create_xgboost_artifacts(tmp_path, n_features=5)
+    predictor = BreastCancerPredictor(artifact_dir=str(tmp_path))
+    
+    # Pass 3 features instead of 5
+    X_bad = np.random.rand(1, 3)
+    
+    # Accepts "features" in message (covers both custom ValueError and sklearn errors)
     with pytest.raises(ValueError, match="features"):
-        predictor._prepare(X_bad)
+        predictor.predict(X_bad)

@@ -584,6 +584,15 @@ async def predict(file: UploadFile = File(... )):
         prediction_requests_total.labels(status='success').inc()
         request_duration = time.time() - request_start_time
         
+        # Calculate average confidence safely
+        if predictions:
+            # Extract probabilities, defaulting to 0 if missing
+            probs = [p.get('probability', 0.0) for p in predictions]
+            avg_confidence = round(float(np.mean(probs)), 4) if probs else 0.0
+        else:
+            avg_confidence = 0.0
+        # round(np.mean([p.get('probability', 0) for p in predictions if 'probability' in p]), 4)
+        
         return {
             "success":  True,
             "file":  file.filename,
@@ -601,7 +610,7 @@ async def predict(file: UploadFile = File(... )):
             "statistics": {
                 "malignant_count": sum(1 for p in predictions if p.get('prediction') == 1),
                 "benign_count": sum(1 for p in predictions if p.get('prediction') == 0),
-                "avg_confidence": round(np.mean([p.get('probability', 0) for p in predictions if 'probability' in p]), 4),
+                "avg_confidence": avg_confidence,
                 "current_hour": current_hour
             }
         }
