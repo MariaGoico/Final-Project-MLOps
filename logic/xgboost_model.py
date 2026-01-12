@@ -498,4 +498,4 @@ if __name__ == "__main__":
     classifier = XGBoostBreastCancerClassifier(
         data_path='data/data.csv'
     )
-    model, threshold = classifier.train_and_optimize(n_trials=5)
+    model, threshold = classifier.train_and_optimize(n_trials=30)

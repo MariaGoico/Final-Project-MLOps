@@ -497,4 +497,4 @@ if __name__ == "__main__":
     classifier = TabNetBreastCancerClassifier(
         data_path='data/data.csv'
     )
-    model, threshold = classifier.train_and_optimize(n_trials=3)
+    model, threshold = classifier.train_and_optimize(n_trials=30)
